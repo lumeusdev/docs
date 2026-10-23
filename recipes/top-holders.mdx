@@ -1,0 +1,142 @@
+---
+title: Top holders of a token
+sidebarTitle: Top holders
+description: Rank the largest holders of an asset and their share of supply.
+---
+
+Get a token's largest holders in one Assets API request. Holders are sorted by
+balance, largest first, and the response carries `holder_count` and `supply`, so
+you can show each holder's share without a second call.
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+<TestnetSetup />
+
+## Fetch the top 10
+
+<CodeGroup>
+
+```bash curl
+curl --fail-with-body -G "$ASSETS_URL/assets/$ASSET/holders" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode 'limit=10' \
+  | jq -r '.supply as $supply | ._embedded.records[]
+      | [.holder, .kind, .balance,
+         ((.balance | tonumber) / ($supply | tonumber) * 10000 | round / 100 | tostring) + "%"] | @tsv'
+```
+
+```javascript JavaScript
+// Node 18+: save as top-holders.mjs and run `node top-holders.mjs`
+const { ASSETS_URL, ASSET, LUMEUS_API_KEY } = process.env;
+
+const url = new URL(`/assets/${ASSET}/holders`, ASSETS_URL);
+url.searchParams.set('limit', '10');
+
+const response = await fetch(url, { headers: { Authorization: `Bearer ${LUMEUS_API_KEY}` } });
+const page = await response.json();
+if (!response.ok) throw new Error(`${response.status} ${page.code}: ${page.error}`);
+
+// Exact integer math: supply is a decimal string with `decimals` places.
+const toRaw = (amount, decimals) => {
+  const [whole, fraction = ''] = amount.split('.');
+  return BigInt(whole + fraction.padEnd(decimals, '0'));
+};
+const supplyRaw = toRaw(page.supply, page.decimals ?? 0);
+console.log(`${page.holder_count} holders, supply ${page.supply}`);
+page._embedded.records.forEach((h, i) => {
+  // Share in basis points, rounded half up: the same rule as the Python version.
+  const bp = (BigInt(h.balance_raw) * 20000n + supplyRaw) / (2n * supplyRaw);
+  console.log(i + 1, h.holder, h.balance, `${bp / 100n}.${String(bp % 100n).padStart(2, '0')}%`);
+});
+```
+
+```python Python
+# pip install requests; save as top_holders.py and run `python top_holders.py`
+import os
+from decimal import Decimal
+
+import requests
+
+response = requests.get(
+    f"{os.environ['ASSETS_URL']}/assets/{os.environ['ASSET']}/holders",
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    params={"limit": 10},
+    timeout=60,
+)
+page = response.json()
+if not response.ok:
+    raise SystemExit(f"{response.status_code} {page['code']}: {page['error']}")
+
+# Exact integer math: supply is a decimal string with `decimals` places.
+supply_raw = int(Decimal(page["supply"]).scaleb(page["decimals"] or 0))
+print(f"{page['holder_count']} holders, supply {page['supply']}")
+for rank, h in enumerate(page["_embedded"]["records"], start=1):
+    # Share in basis points, rounded half up: the same rule as the JavaScript version.
+    bp = (int(h["balance_raw"]) * 20000 + supply_raw) // (2 * supply_raw)
+    print(rank, h["holder"], h["balance"], f"{bp // 100}.{bp % 100:02d}%")
+```
+
+</CodeGroup>
+
+Output for the sample asset (`BTC` on Testnet), trimmed:
+
+```text
+55 holders, supply 2149.9091407
+1 CCSXXPCXICXOC2MLU3UINWYKL6M5VNLVOTHA4ZQ5S5BEDZGRWDTP52CG 1361.4076072 63.32%
+2 CAOWRPPM74GS4HLIHK72W3LF7VWUNZEIOVGS7CZ6AUMSAFPTSHRO3VSF 459.5518062 21.38%
+3 CCB6IWBTPC4NVM34ZFQDGGIDIJXDR7MR3TM27LSCN4XEJYIWXI4XQWOU 83.3333333 3.88%
+...
+8 GD7B4KAJZE25TZHCTJURSOJOO3LDG4TB375UHZYNI7HQ5DF72WUEMEBA 20.9912634 0.98%
+```
+
+The response, trimmed to one holder:
+
+```json
+{
+  "asset": "BTC:GAGVZMODPYFTULIVSY3RGFADIC5LF4LLSN37N4MFWGNZ57TYBXL2LQQX",
+  "decimals": 7,
+  "holder_count": 55,
+  "supply": "2139.4616795",
+  "supply_source": "exact",
+  "_embedded": {
+    "records": [
+      {
+        "holder": "CCSXXPCXICXOC2MLU3UINWYKL6M5VNLVOTHA4ZQ5S5BEDZGRWDTP52CG",
+        "kind": "contract",
+        "balance": "1350.9601460",
+        "balance_raw": "13509601460",
+        "authorized": true,
+        "source": "ledger_entry",
+        "last_modified_ledger": 5331557
+      }
+    ]
+  }
+}
+```
+
+## Notes
+
+- The JavaScript and Python versions compute shares with integers from
+  `balance_raw` and `supply` and round the same way. The curl line uses jq's
+  floating point and is for display only.
+- `supply` is `null` when the index has no supply for the token (and at a past
+  ledger); skip the share column then.
+- `kind` tells accounts (`trustline`, `native`) from contracts (`contract`). The
+  largest holders of a token are often pools or vaults, as here. Filter on
+  `kind` in your code to rank people only.
+- `limit` is at most 200. For more than 200 holders, follow `_links.next.href`.
+- `min_balance=1` leaves out holders below 1 unit.
+- To find one address's rank, call `GET /assets/{asset}/holders/{address}`. See
+  [Holders](/assets-api/holders).
+
+## Credits
+
+On Mainnet, holders cost 5 credits per started 100 records, so this request
+costs 5 credits. On Testnet it is free and counts toward the daily Testnet cap
+of 10,000. See [Limits and credits](/guides/limits).
+
+## Next
+
+- [Holders](/assets-api/holders): filters, ordering and one holder's rank.
+- [Airdrop holder snapshot](/recipes/airdrop-snapshot): holders at a past ledger.
+- [Token registry](/assets-api/registry): find an asset's ID by code.

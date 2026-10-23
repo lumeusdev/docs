@@ -1,0 +1,259 @@
+---
+title: Manage subscriptions
+description: List, pause, resume, update, rotate the signing key of and delete webhook subscriptions.
+---
+
+Use these requests to change a subscription after you create it: pause and
+resume it, change its filters or target, rotate its signing key, or delete it.
+Every change is guarded by the subscription's version, so two changes made at
+the same time cannot silently overwrite each other.
+
+```bash
+# Your Testnet webhook key and the subscription to work on
+export LUMEUS_WEBHOOK_KEY='paste-your-whk_-key'
+export WEBHOOKS_URL='https://webhooks-testnet.lumeus.dev'
+export SUBSCRIPTION_ID='paste-your-subscription-id'
+```
+
+The host selects the network; use `https://webhooks.lumeus.dev` and a Mainnet
+key for Mainnet subscriptions.
+
+## List and read
+
+```bash
+curl --fail-with-body -sS "$WEBHOOKS_URL/v1/subscriptions" \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY"
+```
+
+```json Response (200, example values, trimmed)
+{
+  "subscriptions": [
+    {
+      "id": "3f9a2c1e-8b47-4d2a-9c61-2e5b7a4d8f10",
+      "name": "first-webhook",
+      "target_url": "https://example.com/lumeus-webhook",
+      "account": "GBW5GJATKEWEKAIABR6REIOQXIGNRZXQMMWXVLGCSGLHDXTQWPG7PGS5",
+      "event_types": ["transfer"],
+      "active": true,
+      "version": 1,
+      "desired_state": "active",
+      "effective_state": "active",
+      "slot_state": "sponsored",
+      "sponsored": true,
+      "metered": false,
+      "generation": "testnet-2025-12-18-v2",
+      "activation_checkpoint": 5331394
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+The list is newest first, up to 500 per page (`limit`, 1 to 500); pass
+`next_cursor` back as `cursor` for the next page. Deleted subscriptions are left
+out unless you pass `include_deleted=true`. `GET /v1/subscriptions/{id}`
+returns one subscription with its `ETag` header, plus `free_quota` on a Free
+endpoint and `paid` (plan, endpoint limit and use, credits per delivery) on a
+paid one.
+
+| `effective_state` | Meaning |
+| --- | --- |
+| `active` | Matching and delivering |
+| `activating` | Created or resumed, not matching yet |
+| `paused_by_user` | You paused it |
+| `paused_by_funding` | The Free daily quota is used up, or the plan no longer includes the endpoint |
+| `deleted` | Deleted. It is kept for reference and never delivers again |
+
+## Version and request headers
+
+Every change (`PATCH`, `DELETE`, key rotation, tests and replays) needs two
+headers:
+
+| Header | Rule |
+| --- | --- |
+| `If-Match` | The current `ETag` from `GET /v1/subscriptions/{id}`, such as `"3"`. The weak form `W/"3"` that some proxies return is accepted. Missing: `428`. Out of date: `412` |
+| `Idempotency-Key` | 1 to 128 characters, new for each intended change. Missing: `400`. The examples use `uuidgen`; on Linux without it, use `cat /proc/sys/kernel/random/uuid` |
+
+Retrying with the same key, ETag and body returns the original result without
+applying the change twice. Reusing a key with a different body returns `409`.
+After a `412`, read the subscription again and decide whether your change still
+applies.
+
+This shell function reads the current ETag; the examples below use it:
+
+```bash
+etag() {
+  curl --fail-with-body -sS -o /dev/null -D - "$WEBHOOKS_URL/v1/subscriptions/$SUBSCRIPTION_ID" \
+    -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" \
+    | awk 'tolower($1) == "etag:" { sub(/\r$/, "", $2); print $2 }'
+}
+etag  # prints the current ETag, such as "3"
+```
+
+## Pause or resume
+
+```bash
+curl --fail-with-body -sS -X PATCH "$WEBHOOKS_URL/v1/subscriptions/$SUBSCRIPTION_ID" \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" \
+  -H "If-Match: $(etag)" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -H 'Content-Type: application/json' \
+  --data '{"state":"paused"}'
+```
+
+```json Response (200, example values, subscription trimmed)
+{
+  "subscription": {
+    "id": "3f9a2c1e-8b47-4d2a-9c61-2e5b7a4d8f10",
+    "version": 2,
+    "desired_state": "paused",
+    "effective_state": "paused_by_user"
+  },
+  "in_flight_attempts": 0,
+  "pending_cancellation": false
+}
+```
+
+<Warning>
+Pausing **drops** the events that match while the subscription is paused. They
+are not delivered after you resume: every ledger closed while paused is
+recorded as a `paused_by_user` [coverage gap](/webhooks/recovery). Read those
+ledgers from the [Activity API](/activity/history) after you resume.
+</Warning>
+
+Deliveries that were already queued before the pause wait and are sent after
+you resume. An attempt already in flight (`in_flight_attempts`) can still
+reach your receiver. `state` takes only `active` or `paused` (anything else
+returns `400`; use `DELETE` to remove an endpoint). Send `{"state":"active"}` to resume; matching restarts at
+the current ledger.
+
+## Update filters or the target
+
+PATCH only the fields you change. Omitted or `null` fields keep their value, an
+empty string clears a filter (`"asset": ""`), and `"event_types": []` widens
+the subscription to every decoded event type.
+
+`pending_policy` decides what happens to deliveries already queued under the
+old target or filters:
+
+| `pending_policy` | Queued deliveries |
+| --- | --- |
+| `drain_old` | Are still sent, to the old target with the old filters' events |
+| `cancel_old` | Are cancelled if not yet attempted (never charged). An attempt in flight may finish |
+
+| Change | `pending_policy` |
+| --- | --- |
+| `target_url` | Required. Without it: `400` |
+| `account`, `asset`, `contract_addr` or `event_types` only | Optional, default `drain_old` |
+| Neither (for example only `name` or `state`) | Not allowed: `400` |
+
+Move to a new receiver and drop what is queued for the old one:
+
+```bash
+export NEW_RECEIVER_URL='https://hooks.example.com/lumeus'
+
+curl --fail-with-body -sS -X PATCH "$WEBHOOKS_URL/v1/subscriptions/$SUBSCRIPTION_ID" \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" \
+  -H "If-Match: $(etag)" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -H 'Content-Type: application/json' \
+  --data "$(jq -n --arg target "$NEW_RECEIVER_URL" \
+    '{target_url:$target,pending_policy:"cancel_old"}')"
+```
+
+Receive mints and burns as well as transfers (queued deliveries drain):
+
+```bash
+curl --fail-with-body -sS -X PATCH "$WEBHOOKS_URL/v1/subscriptions/$SUBSCRIPTION_ID" \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" \
+  -H "If-Match: $(etag)" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -H 'Content-Type: application/json' \
+  --data '{"event_types":["transfer","mint","burn"]}'
+```
+
+The new configuration applies from the ledger after the returned
+`effective_checkpoint`. New filters are validated as on create: invalid values
+return `400`, and likely typos in `event_types` add a `warnings` array. A PATCH
+that changes nothing returns `200` with the same version, and an empty body
+returns `400`.
+
+## Rotate a signing key
+
+```bash
+curl --fail-with-body -sS -X POST "$WEBHOOKS_URL/v1/subscriptions/$SUBSCRIPTION_ID/signing-key/rotate" \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" \
+  -H "If-Match: $(etag)" \
+  -H "Idempotency-Key: $(uuidgen)"
+```
+
+```json Response (200, example values)
+{
+  "subscription_id": "3f9a2c1e-8b47-4d2a-9c61-2e5b7a4d8f10",
+  "version": 3,
+  "signing_version": 2,
+  "previous_signing_version": 1,
+  "previous_valid_until": "2026-10-23T14:49:18Z",
+  "secret": "whsec_..."
+}
+```
+
+Store `secret` at once; a retry does not return it again. For 24 hours, until
+`previous_valid_until`, every delivery is signed with both keys (see
+[key rotation](/webhooks/receive#key-rotation)). Deploy the new secret next to
+the old one, then remove the old one. A second rotation during the overlap
+returns `409`. To end the overlap early, after your receiver uses the new
+secret:
+
+```bash
+curl --fail-with-body -sS -X POST "$WEBHOOKS_URL/v1/subscriptions/$SUBSCRIPTION_ID/signing-key/revoke-previous" \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" \
+  -H "If-Match: $(etag)" \
+  -H "Idempotency-Key: $(uuidgen)"
+```
+
+## Delete
+
+```bash
+curl --fail-with-body -sS -X DELETE "$WEBHOOKS_URL/v1/subscriptions/$SUBSCRIPTION_ID" \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" \
+  -H "If-Match: $(etag)" \
+  -H "Idempotency-Key: $(uuidgen)"
+```
+
+Deleting is final. It returns `200` with `effective_state: "deleted"` and:
+
+- cancels deliveries not yet attempted (they are never charged);
+- deletes the endpoint's test history;
+- removes its signing secrets;
+- frees its place under your plan's endpoint count (or your Free endpoint).
+
+`GET /v1/subscriptions/{id}` still returns the deleted subscription, and a later
+change returns `410`.
+
+## Webhook keys
+
+`whk_` keys are managed with the same API (or in the dashboard under
+**Webhooks > Webhook keys**):
+
+| Request | Does |
+| --- | --- |
+| `POST /v1/keys` | Creates a key. Body `{"name": "...", "expires_at": "..."}`, both optional; `expires_at` is one minute to five years ahead. The secret is shown once |
+| `GET /v1/keys` | Lists keys with their `prefix`, never the secret |
+| `DELETE /v1/keys/{id}` | Revokes a key at once |
+
+An organization holds at most 20 active keys per network; past that, create
+returns `409`.
+
+## Limits
+
+| Requests per organization | Limit |
+| --- | --- |
+| Reads | 120 per minute |
+| Creates, updates and rotations | 30 per minute |
+| Pause, delete and key revocation | 30 per minute, counted separately so you can always stop an endpoint |
+| Test deliveries | 12 per hour |
+| Concurrent management requests | 8 |
+
+Over a limit you get `429` with `RateLimit` headers. See
+[Rate limits](/guides/rate-limits) and [Errors](/guides/errors).

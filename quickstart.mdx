@@ -1,0 +1,299 @@
+---
+title: Quickstart
+description: Sign up, get a Testnet key and make your first Activity, Assets and RPC calls.
+---
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+Make your first Activity, Assets and RPC calls on Testnet in about five
+minutes. You need a browser and one of `curl`, Node.js 18+ or Python 3 with
+`requests`.
+
+Testnet is free on every plan: up to 10,000 requests a day per organization,
+reset at 00:00 UTC, with no credits used. Credits are for Mainnet.
+
+<Steps>
+<Step title="Sign up and copy your key">
+
+Open [app.lumeus.dev](https://app.lumeus.dev) and sign in with your email.
+Lumeus emails you a six-digit code; there is no password. The first screen
+shows your Testnet key (`lum_test_...`). It is shown once, so save it in your
+secret manager. You can create more keys later under **API keys**.
+
+One key works on the Activity API, the Assets API and RPC of its network.
+Mainnet needs a separate `lum_live_...` key. Webhooks use their own `whk_...`
+key; see [your first webhook](/webhooks/quickstart).
+
+<TestnetSetup />
+
+The JavaScript and Python examples below read the same environment variables.
+
+</Step>
+<Step title="Read history and balances">
+
+Read the two newest token movements of the sample account from the Activity
+API:
+
+<CodeGroup>
+
+```bash curl
+curl --fail-with-body -G "$ACTIVITY_URL/accounts/$ACCOUNT/activity" \
+  --data-urlencode limit=2 \
+  -H "Authorization: Bearer $LUMEUS_API_KEY"
+```
+
+```javascript JavaScript
+// Node 18+. Save as activity.mjs (for top-level await) and run: node activity.mjs
+const url = new URL(`/accounts/${process.env.ACCOUNT}/activity`, process.env.ACTIVITY_URL);
+url.searchParams.set('limit', '2');
+
+const response = await fetch(url, {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+const page = await response.json();
+if (!response.ok) throw new Error(`${response.status} ${page.code}: ${page.error}`);
+console.log(JSON.stringify(page, null, 2));
+```
+
+```python Python
+import json
+import os
+
+import requests
+
+response = requests.get(
+    f"{os.environ['ACTIVITY_URL']}/accounts/{os.environ['ACCOUNT']}/activity",
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    params={"limit": 2},
+    timeout=60,
+)
+response.raise_for_status()
+print(json.dumps(response.json(), indent=2))
+```
+
+</CodeGroup>
+
+```json Response (trimmed to one record)
+{
+  "read_view": {
+    "network": "testnet",
+    "generation": "testnet-2025-12-18-v3",
+    "decoder_version": "activity-v6-sdk-0.7.3-protocol-29",
+    "first_ledger": 3,
+    "snapshot_ledger": 5332409,
+    "published_through": 5332409
+  },
+  "range_complete": false,
+  "limit": 2,
+  "_links": {
+    "next": { "href": "/accounts/GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR/activity?cursor=0022902513673965569-0000000000&generation=testnet-2025-12-18-v3&limit=2&order=desc&snapshot_ledger=5332409" }
+  },
+  "_embedded": {
+    "records": [
+      {
+        "id": "testnet:5332408:13",
+        "kind": "token_transfer",
+        "type": "transfer",
+        "network": "testnet",
+        "ledger": 5332408,
+        "closed_at": "2026-10-22T16:13:47Z",
+        "tx_hash": "84f3c0cf8ff249653d02bcd1038060e32bdcf437bc7e762caff2c0e369c08fcb",
+        "asset": "native",
+        "from": "GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR",
+        "to": "GDUH7T6HNLLTMJBQ5ZI2SALYNZOZGFBDJZUON4H6KQQ7ULTYDX6E7X6I",
+        "amount": "10000.0000000",
+        "amount_raw": "100000000000",
+        "paging_token": "0022902517968936961-0000000000"
+      }
+    ]
+  }
+}
+```
+
+Then read the same account's current balances from the Assets API:
+
+<CodeGroup>
+
+```bash curl
+curl --fail-with-body -G "$ASSETS_URL/accounts/$ACCOUNT/holdings" \
+  --data-urlencode limit=2 \
+  -H "Authorization: Bearer $LUMEUS_API_KEY"
+```
+
+```javascript JavaScript
+// Node 18+. Save as holdings.mjs (for top-level await) and run: node holdings.mjs
+const url = new URL(`/accounts/${process.env.ACCOUNT}/holdings`, process.env.ASSETS_URL);
+url.searchParams.set('limit', '2');
+
+const response = await fetch(url, {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+const page = await response.json();
+if (!response.ok) throw new Error(`${response.status} ${page.code}: ${page.error}`);
+console.log(JSON.stringify(page, null, 2));
+```
+
+```python Python
+import json
+import os
+
+import requests
+
+response = requests.get(
+    f"{os.environ['ASSETS_URL']}/accounts/{os.environ['ACCOUNT']}/holdings",
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    params={"limit": 2},
+    timeout=60,
+)
+response.raise_for_status()
+print(json.dumps(response.json(), indent=2))
+```
+
+</CodeGroup>
+
+```json Response (trimmed)
+{
+  "address": "GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR",
+  "_embedded": {
+    "records": [
+      {
+        "asset": "native",
+        "kind": "native",
+        "code": "XLM",
+        "issuer": null,
+        "decimals": 7,
+        "balance": "7056467984.5299856",
+        "balance_raw": "70564679845299856",
+        "spendable": "7056467983.5299856",
+        "source": "ledger_entry",
+        "verified": true
+      }
+    ]
+  },
+  "completeness": { "complete": true, "verified": 1, "unverified": 0 },
+  "read_view": {
+    "network": "testnet",
+    "as_of_ledger": 5332411,
+    "as_of_closed_at": "2026-10-22T16:14:02Z"
+  }
+}
+```
+
+Every answer carries `read_view`, the ledger it reflects. Amounts are strings;
+use `amount_raw` and `balance_raw` for exact integer math. A `401` means the key
+is missing, revoked or for the other network; the message names the right host.
+
+</Step>
+<Step title="Call RPC">
+
+RPC is standard Stellar JSON-RPC on one endpoint, `POST /`:
+
+<CodeGroup>
+
+```bash curl
+curl --fail-with-body "$RPC_URL/" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","id":"health-1","method":"getHealth"}'
+```
+
+```javascript JavaScript
+// Node 18+. Save as rpc.mjs (for top-level await) and run: node rpc.mjs
+const response = await fetch(`${process.env.RPC_URL}/`, {
+  method: 'POST',
+  headers: {
+    Authorization: `Bearer ${process.env.LUMEUS_API_KEY}`,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({ jsonrpc: '2.0', id: 'health-1', method: 'getHealth' }),
+});
+const reply = await response.json();
+if (reply.error) throw new Error(`${response.status} ${reply.error.data}: ${reply.error.message}`);
+console.log(JSON.stringify(reply, null, 2));
+```
+
+```python Python
+import json
+import os
+
+import requests
+
+response = requests.post(
+    f"{os.environ['RPC_URL']}/",
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    json={"jsonrpc": "2.0", "id": "health-1", "method": "getHealth"},
+    timeout=60,
+)
+reply = response.json()
+if "error" in reply:
+    raise SystemExit(f"{response.status_code} {reply['error'].get('data')}: {reply['error']['message']}")
+print(json.dumps(reply, indent=2))
+```
+
+</CodeGroup>
+
+```json Response
+{
+  "jsonrpc": "2.0",
+  "id": "health-1",
+  "result": {
+    "status": "healthy",
+    "latestLedger": 5332411,
+    "latestLedgerCloseTime": "1792685642",
+    "oldestLedger": 5244415,
+    "oldestLedgerCloseTime": "1792245662",
+    "ledgerRetentionWindow": 120960
+  }
+}
+```
+
+Check for `error` in every JSON-RPC reply, even with HTTP `200`. You can also
+use RPC from the Stellar SDKs by passing the key as a header: see
+[Stellar SDKs](/rpc/sdks).
+
+</Step>
+</Steps>
+
+## Check your usage
+
+`GET /v1/usage` on the Activity host reports today's Testnet requests in its
+`testnet` block. Your Mainnet credits are in the `monthly_credits_*` fields.
+
+```bash
+curl --fail-with-body "$ACTIVITY_URL/v1/usage" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY"
+```
+
+```json Response (trimmed)
+{
+  "plan": "free",
+  "testnet": {
+    "free": true,
+    "day": "2026-10-22",
+    "daily_requests_used": 1234,
+    "daily_requests_limit": 10000,
+    "daily_requests_remaining": 8766,
+    "resets_at": "2026-10-23T00:00:00Z"
+  }
+}
+```
+
+Past the daily cap, Testnet requests return `429 rate_limited` until 00:00 UTC.
+See [usage and limits](/guides/limits#testnet-is-free).
+
+## Next steps
+
+- [Activity API](/activity/overview): full history by account, asset, contract
+  or transaction.
+- [Assets API](/assets-api/overview): holdings, ranked holders and the token
+  registry.
+- [RPC](/rpc/overview): current state, simulation and submission.
+- [Your first webhook](/webhooks/quickstart): Free includes one Testnet
+  endpoint.
+- [Recipes](/recipes): end-to-end tasks in curl, JavaScript and Python.
+- Before Mainnet, read [usage and limits](/guides/limits) and
+  [plans and billing](/guides/billing).
+
+Each API host also serves its OpenAPI document at `GET /openapi.json`, for
+example `https://api-testnet.lumeus.dev/openapi.json`, for SDK generators and
+agents.

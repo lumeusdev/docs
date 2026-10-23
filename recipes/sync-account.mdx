@@ -1,0 +1,260 @@
+---
+title: Sync history to a database
+sidebarTitle: Sync account history
+description: Copy an account's full history into your database, then keep it current. Safe to stop and resume.
+---
+
+Keep a local copy of an account's Activity history that you can query with SQL.
+The sync walks the history oldest first, stores each page of records together
+with the link to the next page, and resumes from that link after a crash or
+restart. Rerunning it later fetches only the new ledgers.
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+<TestnetSetup />
+
+This recipe syncs a Testnet wallet with a few hundred records:
+
+```bash
+export WALLET='GADH5BQZDLFX5WY5HL5X2C3WVH2HWTMC6IIP22VRFGUQZMVQSBFYD4VK'
+```
+
+## Tables
+
+Two tables: the events, keyed so a record can never be stored twice, and the
+sync progress per account. The examples run this schema on SQLite so they work
+as pasted; it is also valid PostgreSQL (use `JSONB` for `body` there).
+
+```sql
+CREATE TABLE IF NOT EXISTS activity_events (
+  network TEXT   NOT NULL,
+  id      TEXT   NOT NULL,
+  account TEXT   NOT NULL,
+  ledger  BIGINT NOT NULL,
+  type    TEXT   NOT NULL,
+  body    TEXT   NOT NULL,
+  PRIMARY KEY (network, id)
+);
+
+CREATE TABLE IF NOT EXISTS activity_sync (
+  account                TEXT PRIMARY KEY,
+  next_href              TEXT,    -- set while a walk is in progress
+  scanned_through_ledger BIGINT   -- set when a walk completes
+);
+```
+
+`(network, id)` is the same key [webhooks](/webhooks/overview) use for the same
+event, so you can add pushes to this table later. After a Testnet reset, ledger
+numbers and IDs repeat: start a new database.
+
+## How it works
+
+1. **Start.** With no saved state, request `order=asc` from the first ledger.
+   With a saved `scanned_through_ledger` S, request `since_ledger=S+1`. With a
+   saved `next_href`, resume from it.
+2. **Store each page in one transaction.** Insert the records with
+   `ON CONFLICT DO NOTHING` and save the page's `_links.next.href` in the same
+   transaction, so a crash never loses or duplicates a page.
+3. **Finish.** When `range_complete` is `true`, save `scanned_through_ledger`
+   and clear `next_href`. Use `scanned_through_ledger`, not the ledger of the
+   last record: the scan covers ledgers where the account had no activity.
+4. **Retry only what is safe.** `rate_limited` (429) and `busy`,
+   `index_not_ready` or `unavailable` (503) are retried with the same URL after
+   `Retry-After` seconds, at most 5 times. A `Retry-After` over 60 seconds means
+   the daily Testnet cap is reached: stop and run again after 00:00 UTC.
+   `query_timeout` is never repeated unchanged: the sync stops, and you rerun it
+   with a lower `limit`. Every other error stops the sync; the saved link
+   resumes it.
+
+## Run the sync
+
+<CodeGroup>
+
+```javascript JavaScript
+// Node 22.13+ (built-in node:sqlite): save as sync.mjs and run `node sync.mjs`
+import { DatabaseSync } from 'node:sqlite';
+
+const { ACTIVITY_URL, WALLET, LUMEUS_API_KEY } = process.env;
+const LIMIT = 100; // lower it if a page fails with query_timeout
+const RETRYABLE = ['rate_limited', 'busy', 'index_not_ready', 'unavailable'];
+const sleep = (s) => new Promise((resolve) => setTimeout(resolve, s * 1000));
+
+// GET one page. Retries only the codes that are safe to repeat, at most 5 times.
+async function get(href) {
+  for (let attempt = 1; ; attempt++) {
+    const response = await fetch(new URL(href, ACTIVITY_URL), {
+      headers: { Authorization: `Bearer ${LUMEUS_API_KEY}` },
+    });
+    const page = await response.json().catch(() => ({}));
+    if (response.ok) return page;
+    const wait = Number(response.headers.get('retry-after') ?? 2);
+    if (!RETRYABLE.includes(page.code) || attempt === 5 || wait > 60) {
+      // query_timeout lands here: rerun with a lower LIMIT instead of repeating the URL.
+      throw new Error(`${response.status} ${page.code}: ${page.error} (${page.request_id})`);
+    }
+    await sleep(wait);
+  }
+}
+
+const db = new DatabaseSync('activity.db');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS activity_events (
+    network TEXT NOT NULL, id TEXT NOT NULL, account TEXT NOT NULL,
+    ledger BIGINT NOT NULL, type TEXT NOT NULL, body TEXT NOT NULL,
+    PRIMARY KEY (network, id));
+  CREATE TABLE IF NOT EXISTS activity_sync (
+    account TEXT PRIMARY KEY, next_href TEXT, scanned_through_ledger BIGINT);`);
+
+const insert = db.prepare(`INSERT INTO activity_events VALUES (?, ?, ?, ?, ?, ?)
+  ON CONFLICT DO NOTHING`);
+const save = db.prepare(`INSERT INTO activity_sync VALUES (?, ?, ?)
+  ON CONFLICT (account) DO UPDATE SET next_href = excluded.next_href,
+    scanned_through_ledger = excluded.scanned_through_ledger`);
+const state = db.prepare('SELECT * FROM activity_sync WHERE account = ?').get(WALLET);
+
+let href = state?.next_href
+  ?? `/accounts/${WALLET}/activity?order=asc&limit=${LIMIT}`
+    + (state?.scanned_through_ledger ? `&since_ledger=${state.scanned_through_ledger + 1}` : '');
+let scanned = state?.scanned_through_ledger ?? null;
+
+while (href) {
+  const page = await get(href);
+  const next = page.range_complete ? null : page._links.next.href;
+  if (page.range_complete) scanned = page.scanned_through_ledger;
+
+  db.exec('BEGIN');
+  for (const r of page._embedded.records) {
+    insert.run(r.network, r.id, WALLET, r.ledger, r.type, JSON.stringify(r));
+  }
+  save.run(WALLET, next, scanned);
+  db.exec('COMMIT');
+
+  console.log(`stored ${page._embedded.records.length} records, complete=${page.range_complete}`);
+  href = next;
+}
+const { n } = db.prepare('SELECT count(*) AS n FROM activity_events WHERE account = ?').get(WALLET);
+console.log(`${n} records in activity.db, synced through ledger ${scanned}`);
+```
+
+```python Python
+# pip install requests; save as sync.py and run `python sync.py`
+import json
+import os
+import sqlite3
+import time
+
+import requests
+
+base, wallet = os.environ["ACTIVITY_URL"], os.environ["WALLET"]
+headers = {"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"}
+LIMIT = 100  # lower it if a page fails with query_timeout
+RETRYABLE = {"rate_limited", "busy", "index_not_ready", "unavailable"}
+
+
+def get(href):
+    """GET one page. Retries only the codes that are safe to repeat, at most 5 times."""
+    for attempt in range(1, 6):
+        response = requests.get(base + href, headers=headers, timeout=60)
+        try:
+            page = response.json()
+        except ValueError:
+            page = {}
+        if response.ok:
+            return page
+        wait = int(response.headers.get("Retry-After", "2"))
+        if page.get("code") not in RETRYABLE or attempt == 5 or wait > 60:
+            # query_timeout lands here: rerun with a lower LIMIT instead of repeating the URL.
+            raise SystemExit(f"{response.status_code} {page.get('code')}: {page.get('error')} ({page.get('request_id')})")
+        time.sleep(wait)
+
+
+db = sqlite3.connect("activity.db")
+db.executescript("""
+  CREATE TABLE IF NOT EXISTS activity_events (
+    network TEXT NOT NULL, id TEXT NOT NULL, account TEXT NOT NULL,
+    ledger BIGINT NOT NULL, type TEXT NOT NULL, body TEXT NOT NULL,
+    PRIMARY KEY (network, id));
+  CREATE TABLE IF NOT EXISTS activity_sync (
+    account TEXT PRIMARY KEY, next_href TEXT, scanned_through_ledger BIGINT);
+""")
+state = db.execute(
+    "SELECT next_href, scanned_through_ledger FROM activity_sync WHERE account = ?", (wallet,)
+).fetchone()
+next_href, scanned = state if state else (None, None)
+
+href = next_href or f"/accounts/{wallet}/activity?order=asc&limit={LIMIT}" + (
+    f"&since_ledger={scanned + 1}" if scanned else ""
+)
+
+while href:
+    page = get(href)
+    href = None if page["range_complete"] else page["_links"]["next"]["href"]
+    if page["range_complete"]:
+        scanned = page["scanned_through_ledger"]
+
+    with db:  # one transaction: records and progress together
+        db.executemany(
+            "INSERT INTO activity_events VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+            [(r["network"], r["id"], wallet, r["ledger"], r["type"], json.dumps(r))
+             for r in page["_embedded"]["records"]],
+        )
+        db.execute(
+            "INSERT INTO activity_sync VALUES (?, ?, ?) ON CONFLICT (account) DO UPDATE SET "
+            "next_href = excluded.next_href, scanned_through_ledger = excluded.scanned_through_ledger",
+            (wallet, href, scanned),
+        )
+    print(f"stored {len(page['_embedded']['records'])} records, complete={page['range_complete']}")
+
+(n,) = db.execute("SELECT count(*) FROM activity_events WHERE account = ?", (wallet,)).fetchone()
+print(f"{n} records in activity.db, synced through ledger {scanned}")
+```
+
+</CodeGroup>
+
+The first run walks the whole history; a run a minute later fetches only the
+new ledgers:
+
+```text
+stored 100 records, complete=false
+stored 100 records, complete=false
+stored 62 records, complete=true
+262 records in activity.db, synced through ledger 5331565
+
+stored 0 records, complete=true
+262 records in activity.db, synced through ledger 5331569
+```
+
+Then query your copy:
+
+```sql
+SELECT type, count(*) FROM activity_events WHERE account = 'GADH5BQZDLFX5WY5HL5X2C3WVH2HWTMC6IIP22VRFGUQZMVQSBFYD4VK' GROUP BY type;
+```
+
+## Keep it current
+
+Run the sync on a schedule, for example every minute. Each run starts at
+`scanned_through_ledger + 1`. When nothing new is published yet, the page is
+empty and complete and the saved ledger stays the same; that is not an error.
+
+For a busy account, raise `limit` to 1000 (the account route's maximum) to need
+fewer pages. For pushes instead of polling, add a
+[webhook subscription](/webhooks/overview); its events land on the same `(network, id)` key.
+
+## Credits
+
+On Testnet the sync is free: each page is one request toward your daily Testnet
+cap of 10,000 requests. A sync every minute that finds nothing new uses 1,440
+requests a day per account.
+
+On Mainnet, account activity costs 1 credit per started 100 records (and an
+empty page costs 1). The first run above would cost 3 credits. A sync every
+minute costs at least 1,440 credits a day per account, about 43,200 a month, so
+the Free plan's 250,000 credits cover about five accounts. Sync less often, or
+add a [webhook](/webhooks/overview) and sync only to fill gaps. See
+[Limits and credits](/guides/limits).
+
+## Next
+
+- [Account history](/activity/history): the sync contract in detail.
+- [Pagination](/activity/pagination): links, snapshots and retries.
+- [Errors](/guides/errors): every `code` and when to retry.

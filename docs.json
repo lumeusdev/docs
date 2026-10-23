@@ -1,0 +1,864 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "aspen",
+  "name": "Lumeus",
+  "description": "Stellar Activity API, Assets API, webhooks and RPC documentation.",
+  "colors": {
+    "primary": "#9A5410",
+    "light": "#F0AE43",
+    "dark": "#CE7517"
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "appearance": {
+    "default": "system"
+  },
+  "background": {
+    "color": {
+      "light": "#FAF8F3",
+      "dark": "#14110D"
+    }
+  },
+  "fonts": {
+    "family": "Hanken Grotesk",
+    "heading": {
+      "family": "Hanken Grotesk",
+      "weight": 700
+    },
+    "body": {
+      "family": "Hanken Grotesk",
+      "weight": 400
+    }
+  },
+  "icons": {
+    "library": "lucide"
+  },
+  "favicon": "/favicon.svg",
+  "thumbnails": {
+    "appearance": "dark"
+  },
+  "seo": {
+    "metatags": {
+      "og:site_name": "Lumeus Docs"
+    }
+  },
+  "styling": {
+    "eyebrows": "breadcrumbs",
+    "codeblocks": {
+      "theme": {
+        "light": "github-light",
+        "dark": "github-dark"
+      }
+    }
+  },
+  "api": {
+    "playground": {
+      "display": "interactive",
+      "proxy": false
+    },
+    "examples": {
+      "languages": [
+        "curl",
+        "javascript",
+        "python"
+      ],
+      "defaults": "required",
+      "prefill": true
+    }
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude"
+    ]
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "icon": "book-open",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": [
+              "index",
+              "quickstart",
+              "guides/authentication",
+              "guides/browser-keys",
+              "guides/billing",
+              "guides/limits"
+            ]
+          },
+          {
+            "group": "Activity API",
+            "icon": "list-filter",
+            "pages": [
+              "activity/overview",
+              "activity/history",
+              "activity/pagination",
+              "activity/events",
+              "activity/tokens",
+              "activity/contract-events"
+            ]
+          },
+          {
+            "group": "Assets API",
+            "icon": "coins",
+            "pages": [
+              "assets-api/overview",
+              "assets-api/holdings",
+              "assets-api/holders",
+              "assets-api/registry",
+              "assets-api/accuracy",
+              "assets-api/account-state",
+              "assets-api/snapshots"
+            ]
+          },
+          {
+            "group": "Webhooks",
+            "icon": "webhook",
+            "pages": [
+              "webhooks/quickstart",
+              "webhooks/overview",
+              "webhooks/receive",
+              "webhooks/balance-events",
+              "webhooks/lifecycle",
+              "webhooks/recovery"
+            ]
+          },
+          {
+            "group": "RPC",
+            "icon": "terminal",
+            "pages": [
+              "rpc/overview",
+              "rpc/methods",
+              "rpc/sdks",
+              "rpc/transactions"
+            ]
+          },
+          {
+            "group": "Troubleshooting",
+            "icon": "life-buoy",
+            "pages": [
+              "guides/errors",
+              "guides/rate-limits",
+              "guides/readiness"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "icon": "settings-2",
+            "pages": [
+              "guides/idempotency"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Recipes",
+        "icon": "compass",
+        "groups": [
+          {
+            "group": "Recipes",
+            "pages": [
+              "recipes/index",
+              "recipes/last-payments",
+              "recipes/wallet-portfolio",
+              "recipes/top-holders",
+              "recipes/sync-account",
+              "recipes/watch-contract",
+              "recipes/airdrop-snapshot",
+              "recipes/rpc-events",
+              "recipes/balance-alerts"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "icon": "square-code",
+        "groups": [
+          {
+            "group": "Activity API",
+            "openapi": {
+              "source": "/api-reference/activity.json",
+              "directory": "reference/activity"
+            },
+            "pages": [
+              {
+                "group": "Queries",
+                "pages": [
+                  "GET /accounts/{id}/activity",
+                  "GET /accounts/{id}/contract-events",
+                  "GET /assets/{asset}/activity",
+                  "GET /contracts/{id}/activity",
+                  "GET /transactions/{hash}/activity",
+                  "GET /activity",
+                  "GET /transactions/{hash}"
+                ]
+              },
+              {
+                "group": "Results",
+                "expanded": false,
+                "pages": [
+                  "GET /operations/{id}",
+                  "GET /operations/{id}/result"
+                ]
+              },
+              {
+                "group": "Health",
+                "expanded": false,
+                "pages": [
+                  "GET /healthz",
+                  "GET /readyz"
+                ]
+              }
+            ]
+          },
+          {
+            "group": "Assets API",
+            "openapi": {
+              "source": "/api-reference/assets.json",
+              "directory": "reference/assets"
+            },
+            "pages": [
+              {
+                "group": "Holdings",
+                "pages": [
+                  "GET /accounts/{address}/holdings"
+                ]
+              },
+              {
+                "group": "Account state",
+                "expanded": false,
+                "pages": [
+                  "GET /accounts/{address}/claimable-balances",
+                  "GET /accounts/{address}/offers",
+                  "GET /accounts/{address}/allowances"
+                ]
+              },
+              {
+                "group": "Tokens",
+                "pages": [
+                  "GET /assets",
+                  "GET /assets/{asset}",
+                  "GET /assets/{asset}/holders",
+                  "GET /assets/{asset}/holders/{address}"
+                ]
+              },
+              {
+                "group": "Snapshots",
+                "expanded": false,
+                "pages": [
+                  "POST /snapshots",
+                  "GET /snapshots/{id}"
+                ]
+              },
+              {
+                "group": "Health",
+                "expanded": false,
+                "pages": [
+                  "GET /healthz",
+                  "GET /readyz"
+                ]
+              }
+            ]
+          },
+          {
+            "group": "Webhooks",
+            "openapi": {
+              "source": "/api-reference/webhooks.json",
+              "directory": "reference/webhooks"
+            },
+            "pages": [
+              {
+                "group": "Subscriptions",
+                "expanded": false,
+                "pages": [
+                  "POST /v1/subscriptions",
+                  "GET /v1/subscriptions",
+                  "GET /v1/subscriptions/{id}",
+                  "PATCH /v1/subscriptions/{id}",
+                  "DELETE /v1/subscriptions/{id}"
+                ]
+              },
+              {
+                "group": "Deliveries",
+                "expanded": false,
+                "pages": [
+                  "GET /v1/subscriptions/{id}/coverage",
+                  "GET /v1/subscriptions/{id}/deliveries",
+                  "POST /v1/subscriptions/{id}/tests",
+                  "GET /v1/subscriptions/{id}/tests/{test}"
+                ]
+              },
+              {
+                "group": "Replay",
+                "expanded": false,
+                "pages": [
+                  "POST /v1/subscriptions/{id}/replays/quote",
+                  "POST /v1/subscriptions/{id}/replays",
+                  "POST /v1/subscriptions/{id}/source-replays/quote",
+                  "POST /v1/subscriptions/{id}/source-replays",
+                  "GET /v1/subscriptions/{id}/replays/{job}",
+                  "DELETE /v1/subscriptions/{id}/replays/{job}"
+                ]
+              },
+              {
+                "group": "Signing keys",
+                "expanded": false,
+                "pages": [
+                  "POST /v1/subscriptions/{id}/signing-key/rotate",
+                  "POST /v1/subscriptions/{id}/signing-key/revoke-previous"
+                ]
+              },
+              {
+                "group": "Webhook keys",
+                "expanded": false,
+                "pages": [
+                  "POST /v1/keys",
+                  "GET /v1/keys",
+                  "DELETE /v1/keys/{id}"
+                ]
+              },
+              {
+                "group": "Health",
+                "expanded": false,
+                "pages": [
+                  "GET /healthz",
+                  "GET /readyz"
+                ]
+              }
+            ]
+          },
+          {
+            "group": "RPC",
+            "openapi": {
+              "source": "/api-reference/rpc.json",
+              "directory": "reference/rpc"
+            },
+            "pages": [
+              {
+                "group": "JSON-RPC",
+                "pages": [
+                  "POST /"
+                ]
+              },
+              {
+                "group": "Results",
+                "expanded": false,
+                "pages": [
+                  "GET /operations/{id}",
+                  "GET /operations/{id}/result"
+                ]
+              },
+              {
+                "group": "Methods",
+                "pages": [
+                  "api/rpc/getHealth",
+                  "api/rpc/getNetwork",
+                  "api/rpc/getVersionInfo",
+                  "api/rpc/getLatestLedger",
+                  "api/rpc/getFeeStats",
+                  "api/rpc/getLedgers",
+                  "api/rpc/getLedgerEntries",
+                  "api/rpc/getTransaction",
+                  "api/rpc/getTransactions",
+                  "api/rpc/getEvents",
+                  "api/rpc/simulateTransaction",
+                  "api/rpc/sendTransaction"
+                ]
+              },
+              {
+                "group": "Health",
+                "expanded": false,
+                "pages": [
+                  "GET /healthz",
+                  "GET /readyz"
+                ]
+              }
+            ]
+          },
+          {
+            "group": "Account",
+            "openapi": {
+              "source": "/api-reference/activity.json",
+              "directory": "reference/account"
+            },
+            "pages": [
+              {
+                "group": "Workspace",
+                "expanded": false,
+                "pages": [
+                  "GET /v1/me",
+                  "PATCH /v1/me"
+                ]
+              },
+              {
+                "group": "API keys",
+                "pages": [
+                  "POST /v1/onboarding",
+                  "POST /v1/keys",
+                  "GET /v1/keys",
+                  "PATCH /v1/keys/{id}",
+                  "POST /v1/keys/{id}/rotate",
+                  "DELETE /v1/keys/{id}"
+                ]
+              },
+              {
+                "group": "Usage",
+                "expanded": false,
+                "pages": [
+                  "GET /v1/usage",
+                  "GET /v1/logs",
+                  "GET /v1/usage/breakdown",
+                  "GET /v1/usage/series"
+                ]
+              },
+              {
+                "group": "Billing",
+                "expanded": false,
+                "pages": [
+                  "GET /v1/plans",
+                  "GET /billing/status",
+                  "POST /billing/checkout",
+                  "POST /billing/subscription",
+                  "POST /billing/portal",
+                  "POST /billing/purchases",
+                  "GET /billing/purchases/{id}"
+                ]
+              },
+              {
+                "group": "Retired",
+                "expanded": false,
+                "pages": [
+                  "POST /billing/topup"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Agents",
+        "icon": "bot",
+        "groups": [
+          {
+            "group": "For agents",
+            "pages": [
+              "agents/overview"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Support",
+        "icon": "life-buoy",
+        "href": "mailto:hello@lumeus.dev"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Dashboard",
+      "href": "https://app.lumeus.dev"
+    }
+  },
+  "redirects": [
+    {
+      "source": "/products/activity-api",
+      "destination": "/activity/overview"
+    },
+    {
+      "source": "/products/webhooks",
+      "destination": "/webhooks/overview"
+    },
+    {
+      "source": "/products/rpc",
+      "destination": "/rpc/overview"
+    },
+    {
+      "source": "/products/assets",
+      "destination": "/assets-api/overview"
+    },
+    {
+      "source": "/guides/launch-status",
+      "destination": "/index"
+    },
+    {
+      "source": "/guides/networks",
+      "destination": "/guides/authentication#networks"
+    },
+    {
+      "source": "/assets-api/limits",
+      "destination": "/guides/limits#assets-api"
+    },
+    {
+      "source": "/rpc/recovery",
+      "destination": "/guides/idempotency#recover-a-result"
+    },
+    {
+      "source": "/assets-api/webhooks",
+      "destination": "/webhooks/balance-events"
+    },
+    {
+      "source": "/reference/activity/result-recovery/retrieve-retained-result",
+      "destination": "/reference/activity/results/get-activity-operation-result"
+    },
+    {
+      "source": "/reference/activity/api-keys/rename-an-api-key",
+      "destination": "/reference/account/api-keys/update-an-api-key"
+    },
+    {
+      "source": "/reference/activity/usage-and-billing/get-usage-and-funding",
+      "destination": "/reference/account/usage/get-usage"
+    },
+    {
+      "source": "/reference/activity/usage-and-billing/list-api-key-requests",
+      "destination": "/reference/account/usage/list-api-key-requests"
+    },
+    {
+      "source": "/reference/activity/usage-and-billing/break-down-usage",
+      "destination": "/reference/account/usage/break-down-usage"
+    },
+    {
+      "source": "/reference/activity/usage-and-billing/get-usage-over-time",
+      "destination": "/reference/account/usage/get-usage-over-time"
+    },
+    {
+      "source": "/reference/activity/usage-and-billing/get-the-plan-catalog",
+      "destination": "/reference/account/billing/get-the-plan-catalog"
+    },
+    {
+      "source": "/reference/activity/usage-and-billing/open-the-billing-portal",
+      "destination": "/reference/account/billing/open-the-billing-portal"
+    },
+    {
+      "source": "/reference/activity/usage-and-billing/start-a-plan-subscription",
+      "destination": "/reference/account/billing/start-a-plan-subscription"
+    },
+    {
+      "source": "/reference/activity/usage-and-billing/change-the-subscription-plan",
+      "destination": "/reference/account/billing/change-the-subscription-plan"
+    },
+    {
+      "source": "/reference/activity/usage-and-billing/get-payment-and-reconciliation-status",
+      "destination": "/reference/account/billing/get-payment-status"
+    },
+    {
+      "source": "/reference/activity/usage-and-billing/prepare-a-versioned-purchase",
+      "destination": "/reference/account/billing/prepare-a-prepaid-purchase"
+    },
+    {
+      "source": "/reference/activity/usage-and-billing/recover-a-purchase",
+      "destination": "/reference/account/billing/get-a-purchase"
+    },
+    {
+      "source": "/reference/activity/usage-and-billing/legacy-purchase-route-retired",
+      "destination": "/reference/account/retired/retired-top-up-route"
+    },
+    {
+      "source": "/reference/activity/service-health/check-liveness",
+      "destination": "/reference/activity/health/check-activity-liveness"
+    },
+    {
+      "source": "/reference/activity/service-health/check-network-readiness",
+      "destination": "/reference/activity/health/check-activity-readiness"
+    },
+    {
+      "source": "/reference/assets/service-health/check-liveness",
+      "destination": "/reference/assets/health/check-assets-liveness"
+    },
+    {
+      "source": "/reference/assets/service-health/check-network-readiness",
+      "destination": "/reference/assets/health/check-assets-readiness"
+    },
+    {
+      "source": "/reference/webhooks/service-health/check-liveness",
+      "destination": "/reference/webhooks/health/check-webhooks-liveness"
+    },
+    {
+      "source": "/reference/webhooks/service-health/check-network-readiness",
+      "destination": "/reference/webhooks/health/check-webhooks-readiness"
+    },
+    {
+      "source": "/reference/rpc/service-health/check-liveness",
+      "destination": "/reference/rpc/health/check-rpc-liveness"
+    },
+    {
+      "source": "/reference/rpc/service-health/check-network-readiness",
+      "destination": "/reference/rpc/health/check-rpc-readiness"
+    },
+    {
+      "source": "/reference/assets/snapshots/start-a-historical-snapshot-job",
+      "destination": "/reference/assets/snapshots/start-a-snapshot-job"
+    },
+    {
+      "source": "/reference/webhooks/subscriptions/get-subscription-and-etag",
+      "destination": "/reference/webhooks/subscriptions/get-a-subscription"
+    },
+    {
+      "source": "/reference/webhooks/subscriptions/update-pause-or-resume-a-subscription",
+      "destination": "/reference/webhooks/subscriptions/update-a-subscription"
+    },
+    {
+      "source": "/reference/webhooks/subscriptions/inspect-activation-and-coverage-gaps",
+      "destination": "/reference/webhooks/deliveries/get-coverage-gaps"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/inspect-recent-deliveries",
+      "destination": "/reference/webhooks/deliveries/list-recent-deliveries"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/send-a-signed-test-event",
+      "destination": "/reference/webhooks/deliveries/send-a-test-event"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/inspect-a-test-delivery",
+      "destination": "/reference/webhooks/deliveries/get-a-test-delivery"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/quote-retained-redelivery",
+      "destination": "/reference/webhooks/replay/quote-a-redelivery"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/start-retained-redelivery",
+      "destination": "/reference/webhooks/replay/start-a-redelivery"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/quote-a-bounded-source-replay",
+      "destination": "/reference/webhooks/replay/quote-a-source-replay"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/start-a-bounded-source-replay",
+      "destination": "/reference/webhooks/replay/start-a-source-replay"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/cancel-pending-replay-work",
+      "destination": "/reference/webhooks/replay/cancel-a-replay"
+    },
+    {
+      "source": "/reference/rpc/result-recovery/retrieve-retained-result",
+      "destination": "/reference/rpc/results/get-rpc-operation-result"
+    },
+    {
+      "source": "/reference/activity/activity/read-account-activity",
+      "destination": "/reference/activity/queries/read-account-activity"
+    },
+    {
+      "source": "/reference/activity/activity/read-asset-activity",
+      "destination": "/reference/activity/queries/read-asset-activity"
+    },
+    {
+      "source": "/reference/activity/activity/read-contract-activity",
+      "destination": "/reference/activity/queries/read-contract-activity"
+    },
+    {
+      "source": "/reference/activity/activity/read-transaction-activity",
+      "destination": "/reference/activity/queries/read-transaction-activity"
+    },
+    {
+      "source": "/reference/activity/activity/read-the-activity-feed",
+      "destination": "/reference/activity/queries/read-the-activity-feed"
+    },
+    {
+      "source": "/reference/activity/activity/read-contract-events-naming-an-address",
+      "destination": "/reference/activity/queries/read-contract-events-naming-an-address"
+    },
+    {
+      "source": "/reference/activity/activity/get-transaction-header",
+      "destination": "/reference/activity/queries/get-transaction-header"
+    },
+    {
+      "source": "/reference/activity/result-recovery/get-operation-status",
+      "destination": "/reference/activity/results/get-activity-operation-status"
+    },
+    {
+      "source": "/reference/activity/result-recovery/get-operation-result",
+      "destination": "/reference/activity/results/get-activity-operation-result"
+    },
+    {
+      "source": "/reference/activity/service-health/check-activity-liveness",
+      "destination": "/reference/activity/health/check-activity-liveness"
+    },
+    {
+      "source": "/reference/activity/service-health/check-activity-readiness",
+      "destination": "/reference/activity/health/check-activity-readiness"
+    },
+    {
+      "source": "/reference/assets/service-health/check-assets-liveness",
+      "destination": "/reference/assets/health/check-assets-liveness"
+    },
+    {
+      "source": "/reference/assets/service-health/check-assets-readiness",
+      "destination": "/reference/assets/health/check-assets-readiness"
+    },
+    {
+      "source": "/reference/webhooks/service-health/check-webhooks-liveness",
+      "destination": "/reference/webhooks/health/check-webhooks-liveness"
+    },
+    {
+      "source": "/reference/webhooks/service-health/check-webhooks-readiness",
+      "destination": "/reference/webhooks/health/check-webhooks-readiness"
+    },
+    {
+      "source": "/reference/rpc/service-health/check-rpc-liveness",
+      "destination": "/reference/rpc/health/check-rpc-liveness"
+    },
+    {
+      "source": "/reference/rpc/service-health/check-rpc-readiness",
+      "destination": "/reference/rpc/health/check-rpc-readiness"
+    },
+    {
+      "source": "/reference/activity/workspace/get-your-workspace",
+      "destination": "/reference/account/workspace/get-your-workspace"
+    },
+    {
+      "source": "/reference/activity/workspace/rename-your-workspace",
+      "destination": "/reference/account/workspace/rename-your-workspace"
+    },
+    {
+      "source": "/reference/activity/api-keys/create-an-api-key",
+      "destination": "/reference/account/api-keys/create-an-api-key"
+    },
+    {
+      "source": "/reference/activity/api-keys/list-api-keys",
+      "destination": "/reference/account/api-keys/list-api-keys"
+    },
+    {
+      "source": "/reference/activity/api-keys/revoke-an-api-key",
+      "destination": "/reference/account/api-keys/revoke-an-api-key"
+    },
+    {
+      "source": "/reference/activity/api-keys/update-an-api-key",
+      "destination": "/reference/account/api-keys/update-an-api-key"
+    },
+    {
+      "source": "/reference/activity/api-keys/rotate-an-api-key",
+      "destination": "/reference/account/api-keys/rotate-an-api-key"
+    },
+    {
+      "source": "/reference/activity/api-keys/issue-the-starter-testnet-key",
+      "destination": "/reference/account/api-keys/issue-the-starter-testnet-key"
+    },
+    {
+      "source": "/reference/activity/usage/get-usage",
+      "destination": "/reference/account/usage/get-usage"
+    },
+    {
+      "source": "/reference/activity/usage/list-api-key-requests",
+      "destination": "/reference/account/usage/list-api-key-requests"
+    },
+    {
+      "source": "/reference/activity/usage/break-down-usage",
+      "destination": "/reference/account/usage/break-down-usage"
+    },
+    {
+      "source": "/reference/activity/usage/get-usage-over-time",
+      "destination": "/reference/account/usage/get-usage-over-time"
+    },
+    {
+      "source": "/reference/activity/billing/get-the-plan-catalog",
+      "destination": "/reference/account/billing/get-the-plan-catalog"
+    },
+    {
+      "source": "/reference/activity/billing/get-payment-status",
+      "destination": "/reference/account/billing/get-payment-status"
+    },
+    {
+      "source": "/reference/activity/billing/open-the-billing-portal",
+      "destination": "/reference/account/billing/open-the-billing-portal"
+    },
+    {
+      "source": "/reference/activity/billing/prepare-a-prepaid-purchase",
+      "destination": "/reference/account/billing/prepare-a-prepaid-purchase"
+    },
+    {
+      "source": "/reference/activity/billing/get-a-purchase",
+      "destination": "/reference/account/billing/get-a-purchase"
+    },
+    {
+      "source": "/reference/activity/billing/start-a-plan-subscription",
+      "destination": "/reference/account/billing/start-a-plan-subscription"
+    },
+    {
+      "source": "/reference/activity/billing/change-the-subscription-plan",
+      "destination": "/reference/account/billing/change-the-subscription-plan"
+    },
+    {
+      "source": "/reference/activity/retired/retired-top-up-route",
+      "destination": "/reference/account/retired/retired-top-up-route"
+    },
+    {
+      "source": "/reference/assets/registry/search-the-token-registry",
+      "destination": "/reference/assets/tokens/search-the-token-registry"
+    },
+    {
+      "source": "/reference/assets/registry/get-a-token-registry-record",
+      "destination": "/reference/assets/tokens/get-a-token-registry-record"
+    },
+    {
+      "source": "/reference/assets/holders/list-ranked-holders-of-a-token",
+      "destination": "/reference/assets/tokens/list-ranked-holders-of-a-token"
+    },
+    {
+      "source": "/reference/assets/holders/get-one-holder-and-its-rank",
+      "destination": "/reference/assets/tokens/get-one-holder-and-its-rank"
+    },
+    {
+      "source": "/reference/webhooks/subscriptions/get-coverage-gaps",
+      "destination": "/reference/webhooks/deliveries/get-coverage-gaps"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/list-recent-deliveries",
+      "destination": "/reference/webhooks/deliveries/list-recent-deliveries"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/send-a-test-event",
+      "destination": "/reference/webhooks/deliveries/send-a-test-event"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/get-a-test-delivery",
+      "destination": "/reference/webhooks/deliveries/get-a-test-delivery"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/quote-a-redelivery",
+      "destination": "/reference/webhooks/replay/quote-a-redelivery"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/start-a-redelivery",
+      "destination": "/reference/webhooks/replay/start-a-redelivery"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/quote-a-source-replay",
+      "destination": "/reference/webhooks/replay/quote-a-source-replay"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/start-a-source-replay",
+      "destination": "/reference/webhooks/replay/start-a-source-replay"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/get-replay-progress",
+      "destination": "/reference/webhooks/replay/get-replay-progress"
+    },
+    {
+      "source": "/reference/webhooks/deliveries-and-recovery/cancel-a-replay",
+      "destination": "/reference/webhooks/replay/cancel-a-replay"
+    },
+    {
+      "source": "/reference/rpc/result-recovery/get-operation-status",
+      "destination": "/reference/rpc/results/get-rpc-operation-status"
+    },
+    {
+      "source": "/reference/rpc/result-recovery/get-operation-result",
+      "destination": "/reference/rpc/results/get-rpc-operation-result"
+    }
+  ]
+}

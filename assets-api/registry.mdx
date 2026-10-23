@@ -1,0 +1,233 @@
+---
+title: Token registry
+description: Search tokens and read one token's identity, metadata, supply and flags.
+---
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+The registry describes every token the index has seen: XLM, classic assets,
+custom SEP-41 contract tokens and liquidity pool shares. Use it to build a token
+search box, to label balances with names and decimals, and to warn users about
+look-alike tokens before they trust a symbol.
+
+<TestnetSetup />
+
+<CodeGroup>
+
+```bash curl
+curl --fail-with-body --get "$ASSETS_URL/assets" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode 'q=usdc' \
+  --data-urlencode 'limit=5'
+```
+
+```js JavaScript
+const url = new URL(`${process.env.ASSETS_URL}/assets`);
+url.searchParams.set('q', 'usdc');
+url.searchParams.set('limit', '5');
+const res = await fetch(url, {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+for (const t of (await res.json())._embedded.records) {
+  console.log(t.asset, t.kind, t.holder_count, t.flags.join(','));
+}
+```
+
+```python Python
+import os, requests
+
+res = requests.get(
+    f"{os.environ['ASSETS_URL']}/assets",
+    params={"q": "usdc", "limit": 5},
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    timeout=30,
+)
+res.raise_for_status()
+for t in res.json()["_embedded"]["records"]:
+    print(t["asset"], t["kind"], t["holder_count"], ",".join(t["flags"]))
+```
+
+</CodeGroup>
+
+Trimmed live response (2 of 5 records). The second token also calls itself
+USDC but is a different contract, so it carries `impersonation_risk`:
+
+```json
+{
+  "_embedded": {
+    "records": [
+      {
+        "asset": "USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+        "asset_type": "credit_alphanum4", "kind": "classic",
+        "code": "USDC", "issuer": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+        "contract_id": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+        "name": null, "symbol": null, "decimals": 7,
+        "layout": "sac", "verified": true, "metadata_source": null,
+        "home_domain": "centre.io", "toml": null,
+        "flags": ["auth_revocable"],
+        "holder_count": 39311,
+        "supply": "36968617626.5189546", "supply_raw": "369686176265189546",
+        "supply_source": "exact", "first_seen_ledger": 0
+      },
+      {
+        "asset": "CAUGJT4GREIY3WHOUUU5RIUDGSPVREF5CDCYJOWMHOVT2GWQT5JEETGJ",
+        "asset_type": "contract", "kind": "sep41",
+        "code": "USDC", "issuer": null,
+        "contract_id": "CAUGJT4GREIY3WHOUUU5RIUDGSPVREF5CDCYJOWMHOVT2GWQT5JEETGJ",
+        "name": "Test USDC", "symbol": "USDC", "decimals": 7,
+        "layout": "balance_i128", "verified": true, "metadata_source": "instance_storage",
+        "home_domain": null, "toml": null,
+        "flags": ["impersonation_risk"],
+        "holder_count": 10055,
+        "supply": "1710004492581.2111110", "supply_raw": "17100044925812111110",
+        "supply_source": "derived", "first_seen_ledger": 0
+      }
+    ]
+  },
+  "_links": {
+    "next": {"href": "/assets?cursor=eyJhIjoiVVNEQzpHRFFPRTIzQ0ZTVU1TVlFLNFk1SkhQUFlLNzNWWUNOSFpIQTdFTktDVjM3UDZTVUVPNlhRQktQUCIsIm4iOjE0MzV9&limit=5&q=usdc"}
+  }
+}
+```
+
+## Search parameters
+
+Results are sorted by `holder_count`, largest first, then by asset ID.
+
+| Parameter | Default | Rules |
+| --- | --- | --- |
+| `q` | none | Case-insensitive prefix of the code or symbol (`usdc` matches `USDC`); at most 64 characters |
+| `kind` | all | One of `native`, `classic`, `sep41`, `pool_share` |
+| `verified` | all | `true` or `false`; other values return `400` |
+| `limit` | 50 | Values above 200 are lowered to 200 |
+| `cursor` | none | From `_links.next.href` |
+
+## One token
+
+<CodeGroup>
+
+```bash curl
+curl --fail-with-body "$ASSETS_URL/assets/$ASSET" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY"
+```
+
+```js JavaScript
+const res = await fetch(`${process.env.ASSETS_URL}/assets/${process.env.ASSET}`, {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+const token = await res.json();
+console.log(token.asset, token.holder_count, token.supply, token.flags);
+```
+
+```python Python
+import os, requests
+
+res = requests.get(
+    f"{os.environ['ASSETS_URL']}/assets/{os.environ['ASSET']}",
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    timeout=30,
+)
+res.raise_for_status()
+token = res.json()
+print(token["asset"], token["holder_count"], token["supply"], token["flags"])
+```
+
+</CodeGroup>
+
+The single-token record has the search fields plus `archived_holder_count`,
+`archived_supply` and `archived_supply_raw`, `read_view` and a `holders` link.
+A SAC contract ID resolves to its classic record and echoes what you asked for:
+`GET /assets/CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` returns
+`"asset": "USDC:GBBD47...", "requested_as": "CBIELTK6..."`.
+
+## Fields
+
+| Field | Meaning |
+| --- | --- |
+| `asset`, `asset_type` | Canonical asset ID and its type (`native`, `credit_alphanum4`, `credit_alphanum12`, `contract`, `pool_share`) |
+| `kind` | `native` (XLM), `classic` (`CODE:ISSUER`, with its SAC when deployed), `sep41` (custom contract token) or `pool_share` |
+| `code`, `issuer`, `contract_id` | Identity. `contract_id` is the SAC of a classic asset, or the token contract |
+| `name`, `symbol`, `decimals` | Metadata. Classic assets and pool shares always have 7 decimals |
+| `metadata_source` | Where `name`, `symbol` and `decimals` came from, such as `protocol` (XLM) or `instance_storage` (contract storage); `null` when no metadata was read |
+| `layout` | Contract storage layout: `sac`, `balance_i128` (recognized), `unknown`, or `ledger_entry` for pool shares; `null` without a contract |
+| `verified` | Balances are read from ledger entries or a recognized layout |
+| `home_domain` | The issuer account's home domain |
+| `toml` | Reserved for SEP-1 stellar.toml currency fields; currently always `null` |
+| `holder_count` | Holders with a non-zero balance, for every kind (`pool.trustline_count` also counts zero-balance trustlines) |
+| `supply`, `supply_raw`, `supply_source` | `exact` from ledger state, or `derived` for custom tokens; see [supply](#supply) |
+| `archived_holder_count`, `archived_supply`, `archived_supply_raw` | Single-token record only: the part of `holder_count` and `supply` held in archived contract balances |
+| `first_seen_ledger` | First ledger the token was observed; `0` when it was already present when the index began |
+| `pool` | Pool shares only, single-token record: see below |
+| `requested_as` | Present when you named the token by another ID, such as its SAC |
+| `flags` | Labels; see [flags](#flags) |
+
+## Flags
+
+| Flag | Meaning |
+| --- | --- |
+| `impersonation_risk` | The code, name or symbol imitates a well-known asset from another issuer |
+| `likely_spam` | The token matches spam heuristics |
+| `unverified_token` | A SEP-41 token whose storage layout is not verified |
+| `unreadable_metadata` | The contract's metadata could not be read |
+| `auth_required`, `auth_revocable`, `auth_immutable`, `auth_clawback_enabled` | Classic issuer account flags (`0x1`, `0x2`, `0x4`, `0x8`); cleared when the issuer account is deleted |
+
+<Warning>
+Identity is the asset ID, never the symbol. Two tokens with the same code or
+symbol are never merged or hidden. Before you display a token name, check
+`issuer` or `contract_id`, and show a warning (or hide the token) when `flags`
+contains `impersonation_risk` or `likely_spam`.
+</Warning>
+
+## Pool shares
+
+A `pool:<64 hex>` record describes a liquidity pool. Its single-token record has
+a `pool` block (live, Testnet):
+
+```json
+{
+  "asset": "pool:0a8ea94f419fe775c4aca4fc6d58aaee51c93d7d13d19b3bcb4e08e0c09cea2e",
+  "kind": "pool_share", "layout": "ledger_entry", "holder_count": 102,
+  "supply": "2051.0000000", "supply_source": "exact",
+  "pool": {
+    "id": "0a8ea94f419fe775c4aca4fc6d58aaee51c93d7d13d19b3bcb4e08e0c09cea2e",
+    "asset_a": "AST1:GDQCP4HYGMBAJWRCUU3WP6QLO67RA7CQS3QRFYO7FQ4KIM37T4Q4WWDD",
+    "asset_b": "AST2:GDQCP4HYGMBAJWRCUU3WP6QLO67RA7CQS3QRFYO7FQ4KIM37T4Q4WWDD",
+    "fee_bp": 30,
+    "reserve_a": "2051.0000000", "reserve_b": "2051.0000000",
+    "total_shares": "2051.0000000", "trustline_count": 102
+  }
+}
+```
+
+`fee_bp` is the pool fee in basis points (30 = 0.3%).
+
+## Supply
+
+`supply` is the sum of every balance of the asset that the index holds:
+trustlines (account balances for XLM) plus SAC and custom-token balances held in
+contract storage, including archived ones. It does not include claimable
+balances or liquidity pool reserves, so it is not the issued amount of a classic
+asset. Supply of a custom token is `derived` from its decoded storage.
+
+## Credits and errors
+
+On Mainnet, search costs 1 credit per started 100 records and one token costs 1;
+Testnet requests are free (they count toward the daily Testnet cap of 10,000).
+Both routes are allowed for [publishable keys](/guides/browser-keys).
+
+| Status | `code` | What to do |
+| --- | --- | --- |
+| `400` | `invalid_request` | Fix `kind`, `verified`, `q` (over 64 characters) or the asset ID |
+| `401` | `unauthorized` | Check the key and the host's network |
+| `404` | `not_found` | The index has never seen this asset |
+| `503` | `busy`, `index_not_ready` | Wait `Retry-After` |
+
+See [errors](/guides/errors).
+
+## Next
+
+- [Token holders](/assets-api/holders): who holds the token.
+- [Accuracy](/assets-api/accuracy): what `verified` and `derived` mean.
+- [Holdings](/assets-api/holdings): flags appear on each balance too.

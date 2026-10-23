@@ -1,0 +1,123 @@
+---
+title: Token classification
+description: Which contract events become token_transfer records and which stay contract_event.
+---
+
+**In short:** a SEP-41 `transfer`, `mint`, `burn` or `clawback` event becomes a
+`token_transfer` record with `from`, `to` and `amount`. Every other successful
+contract event stays a `contract_event` with its topics and data.
+
+This page explains exactly which event shapes count as token movements, so you
+know which route and which `kind` to read. Lumeus classifies events with the
+Stellar SDK token transfer processor (`go-stellar-sdk` v0.7.3).
+
+For example, a contract event with topics `["transfer", from, to]` (both
+addresses) and the `i128` data `5000000` becomes a `token_transfer` with `from` = topic 1, `to` = topic 2
+and `amount_raw` `"5000000"`. An `["approve", owner, spender]` event stays a
+`contract_event` of `type` `approve`, like the record on [events](/activity/events).
+
+## Requirements for every token event
+
+An event is a token movement candidate only when all of these hold:
+
+- It was emitted by a contract call (`InvokeHostFunction`) in a successful
+  transaction.
+- It is a `CONTRACT` event (not a system or diagnostic event) with a contract ID
+  and a version 0 body.
+- It has at least two topics, and the first topic is a Symbol equal to
+  `transfer`, `mint`, `burn` or `clawback`.
+- Each address topic the shape uses is an `ScAddress` (an account, contract or
+  other address). A String or Symbol in that position does not qualify.
+
+The topic counts below are minimums. Extra trailing topics are accepted and
+ignored.
+
+## Topic layouts by protocol
+
+<Accordion title="Before Protocol 23 (version 3 metadata)">
+
+The data must be an `i128` amount.
+
+| Event | Minimum topics | Address roles |
+| --- | --- | --- |
+| `transfer` | 3: `["transfer", from, to]` | `from` = topic 1, `to` = topic 2 |
+| `mint` | 3: `["mint", admin, to]` | `to` = topic 2; the admin is checked and dropped |
+| `clawback` | 3: `["clawback", admin, from]` | `from` = topic 2; the admin is checked and dropped |
+| `burn` | 2: `["burn", from]` | `from` = topic 1 |
+
+</Accordion>
+
+<Accordion title="Protocol 23 and later (version 4 metadata)">
+
+The data is either an `i128` amount or a map whose keys are all Symbols. The map
+needs an `i128` `amount` entry and can carry `to_muxed_id` as a U64, Bytes,
+String or Void value; other keys are ignored. A non-Symbol key or a missing
+amount disqualifies the event.
+
+| Event | Minimum topics | Address roles |
+| --- | --- | --- |
+| `transfer` | 3: `["transfer", from, to]` | `from` = topic 1, `to` = topic 2 |
+| `mint` | 2: `["mint", to]` | `to` = topic 1 |
+| `clawback` | 2: `["clawback", from]` | `from` = topic 1 |
+| `burn` | 2: `["burn", from]` | `from` = topic 1 |
+
+Some custom tokens built with older contract SDKs still emit the earlier
+`["mint", admin, to]` and `["clawback", admin, from]` shapes. When topic 2 of a
+`mint` or `clawback` is an `ScAddress`, Lumeus reads that layout: `to` (mint) or
+`from` (clawback) is topic 2, and the admin in topic 1 is dropped. The record is
+attributed to the holder, so it appears in the holder's account history. A
+Stellar Asset Contract `mint` or `clawback` carries the asset String in topic 2
+and keeps `to`/`from` = topic 1.
+
+`to_muxed_id` becomes `to_muxed_id` (U64), `to_muxed_hash` (Bytes, hex) or
+`to_muxed_text` (String). `to_muxed_address` is added when the recipient is a
+`G` account.
+
+</Accordion>
+
+## Fee events
+
+`fee` records are not read from contract events. They are generated for every
+transaction from its fee result, paid by the fee account (the outer account of a
+fee bump) in the XLM asset contract. A Soroban refund is a second `fee` record
+with a negative amount. A custom contract that emits a `["fee", ...]` event keeps
+it as a `contract_event`.
+
+## Stellar Asset Contracts
+
+After an event qualifies, Lumeus checks whether it came from a Stellar Asset
+Contract: the topic count must exactly match the SAC layout, and the last topic
+must be the asset string whose contract ID equals the emitting contract. A match
+fills `asset` (`native` or `CODE:ISSUER`) and `issuer` for mint, burn and
+clawback. A custom contract cannot claim a SAC asset this way, because the
+contract ID must match.
+
+## Custom contract tokens
+
+A qualifying event from any other contract is a custom token movement:
+
+- `asset` is absent from the record (not `null`); `contract_address` identifies
+  the token.
+- `amount` equals `amount_raw`, the raw integer. Lumeus applies no decimal
+  scaling because it does not know the contract's decimals.
+- There is no `issuer`.
+- The record is attributed to its `from` and `to` addresses, so it appears in
+  their account history, and to the contract for contract queries.
+
+## Events that stay contract_event
+
+A non-conforming event keeps `kind: "contract_event"`, its first-topic name as
+`type` (or `event` when the first topic is not a Symbol), decoded `topics` and
+`data`, and exact `topics_xdr` and `data_xdr`. It has no `from`, `to` or `amount`.
+
+It is filed under the emitting contract, so it is not in
+`/accounts/{id}/activity`. Addresses in topics 1 to 3 are indexed: find the
+events that name an address with
+[`GET /accounts/{id}/contract-events`](/activity/contract-events), or one
+contract's events with `/contracts/{id}/activity?topic1={address}` (also
+`topic2`, `topic3`). Addresses inside `data` are not indexed.
+
+For webhooks, an `account` filter never matches a `contract_event`, but an
+`event_types` filter compares `type` for both kinds: a non-conforming event
+named `transfer` matches `event_types: ["transfer"]`. Check `kind` in your
+receiver.

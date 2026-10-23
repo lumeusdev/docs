@@ -1,0 +1,137 @@
+---
+title: "getLedgerEntries"
+description: "Read the current value of ledger entries by key."
+openapi: "/api-reference/rpc/getLedgerEntries.json POST /"
+---
+
+Returns the current value of up to 200 ledger entries: accounts, trustlines, contract data or contract code. Keys are base64 LedgerKey XDR, not addresses. The example reads the account entry of the sample Testnet account; build keys with your SDK, as in [Build a LedgerKey](/rpc/methods#build-a-ledgerkey) (account and contract keys in JavaScript and Python). The SDK tabs below build the account key.
+
+The examples call Testnet with your key in `LUMEUS_API_KEY`; the SDK tabs use `@stellar/stellar-sdk` and the Python `stellar-sdk` ([SDK setup and errors](/rpc/sdks)). On Mainnet, use `https://rpc.lumeus.dev` and a `lum_live_` key.
+
+<RequestExample>
+```bash cURL
+curl --fail-with-body -s https://rpc-testnet.lumeus.dev \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getLedgerEntries","params":{"keys":["AAAAAAAAAAAQfdFrLDgzSIIugR73qs8U0ZiKbwBUclTTPh5thlbgnA=="]}}'
+```
+
+```javascript JavaScript
+// Node 18+. Save as rpc.mjs and run: node rpc.mjs
+const rpc = async (method, params) => {
+  const res = await fetch('https://rpc-testnet.lumeus.dev', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.LUMEUS_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  });
+  const body = await res.json();
+  if (body.error) throw new Error(`${body.error.data ?? body.error.code}: ${body.error.message}`);
+  return body.result;
+};
+
+console.log(JSON.stringify(await rpc('getLedgerEntries', { keys: ['AAAAAAAAAAAQfdFrLDgzSIIugR73qs8U0ZiKbwBUclTTPh5thlbgnA=='] }), null, 2));
+```
+
+```python Python
+import json
+import os
+
+import requests
+
+
+def rpc(method, params=None):
+    body = {"jsonrpc": "2.0", "id": 1, "method": method}
+    if params is not None:
+        body["params"] = params
+    res = requests.post(
+        "https://rpc-testnet.lumeus.dev",
+        json=body,
+        headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+        timeout=30,
+    )
+    data = res.json()
+    if "error" in data:
+        raise RuntimeError(f"{data['error'].get('data')}: {data['error']['message']}")
+    return data["result"]
+
+
+print(json.dumps(rpc("getLedgerEntries", {"keys": ["AAAAAAAAAAAQfdFrLDgzSIIugR73qs8U0ZiKbwBUclTTPh5thlbgnA=="]}), indent=2))
+```
+
+```javascript JavaScript SDK
+// npm install @stellar/stellar-sdk. Save as sdk.mjs and run: node sdk.mjs
+import { Keypair, rpc, xdr } from '@stellar/stellar-sdk';
+
+const server = new rpc.Server('https://rpc-testnet.lumeus.dev', {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+
+// The LedgerKey of an account entry. Other keys: /rpc/methods#build-a-ledgerkey
+const key = xdr.LedgerKey.account(
+  new xdr.LedgerKeyAccount({ accountId: Keypair.fromPublicKey('GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR').xdrPublicKey() }),
+);
+const { entries, latestLedger } = await server.getLedgerEntries(key);
+// key and val arrive as XDR objects; @stellar/stellar-sdk 17 prints them as JSON.
+console.log(JSON.stringify({ latestLedger, entries }, (k, v) => (typeof v === 'bigint' ? v.toString() : v), 2));
+```
+
+```python Python SDK
+# pip install stellar-sdk
+import os
+
+from stellar_sdk import Keypair, SorobanServer, xdr
+from stellar_sdk.client.requests_client import RequestsClient
+
+# num_retries=0: raise 429/503 at once instead of sleeping through Retry-After.
+server = SorobanServer(
+    "https://rpc-testnet.lumeus.dev",
+    client=RequestsClient(num_retries=0, custom_headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"}),
+)
+
+# The LedgerKey of an account entry. Other keys: /rpc/methods#build-a-ledgerkey
+key = xdr.LedgerKey(
+    type=xdr.LedgerEntryType.ACCOUNT,
+    account=xdr.LedgerKeyAccount(account_id=Keypair.from_public_key("GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR").xdr_account_id()),
+)
+print(server.get_ledger_entries([key]).model_dump_json(by_alias=True, indent=2))
+```
+</RequestExample>
+
+
+## Result
+
+The fields of `result` (stellar-rpc 29). Fields marked "Present only when it applies" can be absent.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `entries` | object[] | Entries that exist; keys with no entry are left out. |
+| `entries[].key` | string | The requested LedgerKey (base64). Present only when it applies. |
+| `entries[].keyJson` | JSON | LedgerKey. Decoded JSON; only with xdrFormat json. |
+| `entries[].xdr` | string | LedgerEntryData. Base64 XDR (with xdrFormat json, the matching Json field instead). Present only when it applies. |
+| `entries[].dataJson` | JSON | LedgerEntryData. Decoded JSON; only with xdrFormat json. |
+| `entries[].lastModifiedLedgerSeq` | integer | Ledger that last changed the entry. |
+| `entries[].liveUntilLedgerSeq` | integer | Contract data and code only: the ledger until which the entry is live (TTL). |
+| `entries[].extXdr` | string | LedgerEntry extension. Base64 XDR (with xdrFormat json, the matching Json field instead). Present only when it applies. |
+| `entries[].extJson` | JSON | LedgerEntry extension. Decoded JSON; only with xdrFormat json. |
+| `latestLedger` | integer | Latest ledger the node has. |
+
+## Parameters
+
+| Name | Type | Rules |
+| --- | --- | --- |
+| `keys` | string[] | Required. 1 to 200 base64 LedgerKey XDR values, each at most 16 KiB. |
+| `xdrFormat` | string | `base64` (default) or `json`. |
+
+## Credits and limits
+
+- **Mainnet:** 2 credits plus 1 credit per started 64 KiB of response, so a small answer costs 3 credits. A call that returns a JSON-RPC error costs nothing.
+- **Testnet:** free. Each call counts toward your organization's 10,000 Testnet requests a day; above that, calls get 429 `rate_limited` until 00:00 UTC.
+- An entry that does not exist is left out of `entries`.
+- The plan RPC rate applies per call; each call in a batch counts as one.
+
+## Errors
+
+Gateway errors are JSON-RPC errors with the machine code in `error.data` and the request ID in `error.request_id`. Common ones: `-32602` (`invalid_request`, HTTP 400) for invalid params, `-32000` with `unauthorized` (401), `rate_limited` (429, wait `Retry-After` seconds) or `unavailable` (503). See [errors](/guides/errors).

@@ -1,0 +1,320 @@
+---
+title: Your first webhook
+description: Run a receiver, expose it with a tunnel, subscribe to a Testnet account and see a verified event.
+---
+
+In about five minutes you will run a receiver on your machine, give it a public
+HTTPS address, subscribe it to a busy Testnet account and watch signed events
+arrive and pass verification. You need `curl`, `jq`, a tunnel tool
+(`cloudflared` or `ngrok`) and one of Node.js 18+, Python 3.9+ or Go 1.22+.
+The Free plan includes one Testnet endpoint, and Testnet deliveries cost no
+credits.
+
+<Steps>
+<Step title="Create a webhook key">
+
+Open [app.lumeus.dev](https://app.lumeus.dev), select **Testnet**, then go to
+**Webhooks > Webhook keys** and choose **Create webhook key**. The key starts
+with `whk_` and is shown once. Webhook keys belong to one network, and `lum_`
+API keys do not work here.
+
+Set these in your first terminal. The host selects the network:
+`webhooks-testnet.lumeus.dev` is Testnet, `webhooks.lumeus.dev` is Mainnet.
+
+```bash
+# Your Testnet webhook key (starts with whk_)
+export LUMEUS_WEBHOOK_KEY='paste-your-whk_-key'
+
+export WEBHOOKS_URL='https://webhooks-testnet.lumeus.dev'
+# A busy Testnet account (the Friendbot) to subscribe to
+export ACCOUNT='GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR'
+```
+
+</Step>
+<Step title="Download a receiver">
+
+Each receiver listens on port 3000 (set `PORT` to change it), verifies the
+signature and the signed delivery context, ignores duplicates and answers
+`204`. Download one into a new folder:
+
+<Tabs>
+<Tab title="Node.js">
+
+```bash
+mkdir -p lumeus-webhook && cd lumeus-webhook
+curl -fsSO https://docs.lumeus.dev/examples/verify-webhook.mjs
+curl -fsSO https://docs.lumeus.dev/examples/webhook-receiver-node.mjs
+```
+
+</Tab>
+<Tab title="Python">
+
+```bash
+mkdir -p lumeus-webhook && cd lumeus-webhook
+curl -fsSO https://docs.lumeus.dev/examples/webhook_receiver.py
+```
+
+</Tab>
+<Tab title="Go">
+
+```bash
+mkdir -p lumeus-webhook && cd lumeus-webhook
+curl -fsSO https://docs.lumeus.dev/examples/webhook-receiver-go/main.go
+curl -fsSO https://docs.lumeus.dev/examples/webhook-receiver-go/go.mod
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+<Step title="Start the receiver">
+
+Start the receiver now, before the subscription exists, so the first live
+events find it running. Open a second terminal in the `lumeus-webhook` folder:
+
+<CodeGroup>
+
+```bash Node.js
+WEBHOOK_SECRET_FILE=webhook-secret.txt node webhook-receiver-node.mjs
+```
+
+```bash Python
+WEBHOOK_SECRET_FILE=webhook-secret.txt python3 webhook_receiver.py
+```
+
+```bash Go
+WEBHOOK_SECRET_FILE=webhook-secret.txt go run .
+```
+
+</CodeGroup>
+
+It prints `listening on http://localhost:3000` and keeps running. It reads the
+signing secret from `webhook-secret.txt` on every request; until the create
+step writes that file, it answers `503`.
+
+</Step>
+<Step title="Expose port 3000 over HTTPS">
+
+Lumeus delivers only to public `https://` URLs, so open a tunnel in a third
+terminal and leave it running:
+
+<CodeGroup>
+
+```bash cloudflared
+cloudflared tunnel --url http://localhost:3000
+# prints https://<random-words>.trycloudflare.com
+```
+
+```bash ngrok
+ngrok http 3000
+# prints Forwarding https://<id>.ngrok-free.app -> http://localhost:3000
+```
+
+</CodeGroup>
+
+Back in the first terminal, save the printed URL. A new tunnel can take up to a
+minute before its name resolves; repeat this `curl` until it prints `503`
+(your receiver, reached through the tunnel, without a secret yet) instead of
+`000`:
+
+```bash
+export RECEIVER_URL='https://paste-your-tunnel-host'
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "$RECEIVER_URL"
+```
+
+</Step>
+<Step title="Create the subscription">
+
+Subscribe to transfers of the sample account. The response contains the
+signing secret (`hmac_secret`) only this once. Pick one idempotency key for
+this create and keep it for any retry. On Linux without `uuidgen`, the command
+falls back to `/proc/sys/kernel/random/uuid` (or use
+`python3 -c 'import uuid; print(uuid.uuid4())'`):
+
+```bash
+export CREATE_KEY="${CREATE_KEY:-$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)}"
+```
+
+Then create the subscription. The command writes the secret to
+`webhook-secret.txt` only on `201` or `202`, and never overwrites an existing
+secret file:
+
+{/* not-run: creates a webhook subscription */}
+```bash
+if [ -e webhook-secret.txt ]; then
+  echo 'webhook-secret.txt already exists; not creating another subscription' >&2
+else
+  STATUS="$(curl -sS -o create.json -w '%{http_code}' "$WEBHOOKS_URL/v1/subscriptions" \
+    -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" \
+    -H "Idempotency-Key: $CREATE_KEY" \
+    -H 'Content-Type: application/json' \
+    --data "$(jq -n --arg target "$RECEIVER_URL" --arg account "$ACCOUNT" \
+      '{name:"first-webhook",target_url:$target,account:$account,event_types:["transfer"]}')")"
+  if [ "$STATUS" = 201 ] || [ "$STATUS" = 202 ]; then
+    (umask 077 && jq -r .hmac_secret create.json > webhook-secret.txt)
+  fi
+  if [ -s create.json ]; then
+    jq 'del(.hmac_secret)' create.json > subscription.json && rm create.json
+    echo "HTTP $STATUS" && cat subscription.json
+  else
+    echo "HTTP $STATUS: no answer from $WEBHOOKS_URL; check the URL and your connection" >&2
+  fi
+fi
+
+export SUBSCRIPTION_ID="$(jq -r '.id // empty' subscription.json)"
+```
+
+```json Response (201, example values, secret removed)
+{
+  "id": "3f9a2c1e-8b47-4d2a-9c61-2e5b7a4d8f10",
+  "name": "first-webhook",
+  "target_url": "https://example-words.trycloudflare.com",
+  "account": "GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR",
+  "event_types": ["transfer"],
+  "active": true,
+  "created_at": "2026-10-22T14:49:18.597644Z",
+  "admission_protocol": 2,
+  "version": 1,
+  "desired_state": "active",
+  "effective_state": "active",
+  "slot_state": "sponsored",
+  "sponsored": true,
+  "metered": false,
+  "signing_version": 1,
+  "generation": "testnet-2025-12-18-v2",
+  "activation_checkpoint": 5331394,
+  "effective_checkpoint": 5331394,
+  "last_scanned_ledger": 5331394,
+  "last_fully_admitted_ledger": 5331394
+}
+```
+
+If the request fails, `subscription.json` holds the error: `400` for a URL
+that is not public HTTPS or does not resolve yet, or for an unknown body field
+(the host already selects the network, so there is no `network` field), and
+`403` if your organization already has its Free endpoint (delete it or
+upgrade). Fix the cause and run the same command again with the same
+`CREATE_KEY`. A retry of a create that already succeeded returns `200` with
+the same subscription and no secret; if you lost the secret, rotate the
+[signing key](/webhooks/lifecycle#rotate-a-signing-key).
+
+</Step>
+<Step title="Wait until the endpoint is active">
+
+Live matching starts once `effective_state` is `active`. Free and paid
+endpoints are `active` in the `201` create response, so you can skip this step.
+If yours shows `activating` (the create returned `202`), poll until it changes.
+A test sent while it is activating returns `409` with `Retry-After: 5`.
+
+```bash
+until [ "$(curl --fail-with-body -sS "$WEBHOOKS_URL/v1/subscriptions/$SUBSCRIPTION_ID" \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" | jq -r .effective_state)" = active ]; do
+  sleep 2
+done
+echo active
+```
+
+</Step>
+<Step title="Send a test event">
+
+A test sends one signed `webhook.test` event to your receiver and reports what
+it answered. It needs the subscription's current `ETag` in `If-Match`:
+
+```bash
+export ETAG="$(curl --fail-with-body -sS -o /dev/null -D - \
+  "$WEBHOOKS_URL/v1/subscriptions/$SUBSCRIPTION_ID" \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" \
+  | awk 'tolower($1) == "etag:" { sub(/\r$/, "", $2); print $2 }')"
+```
+
+{/* not-run: sends a test delivery */}
+```bash
+curl --fail-with-body -sS -X POST "$WEBHOOKS_URL/v1/subscriptions/$SUBSCRIPTION_ID/tests" \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" \
+  -H "If-Match: $ETAG" \
+  -H "Idempotency-Key: $(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
+```
+
+```json Response (200, example values)
+{
+  "id": 5,
+  "subscription_id": "3f9a2c1e-8b47-4d2a-9c61-2e5b7a4d8f10",
+  "event_id": "test_5",
+  "status": "delivered",
+  "response_code": 204,
+  "created_at": "2026-10-22T10:00:00Z",
+  "completed_at": "2026-10-22T10:00:00.274Z"
+}
+```
+
+`status` is `delivered` when your receiver answered `2xx`. Otherwise it is
+`rejected` with the `response_code` or a `last_error` such as `receiver timed
+out`, or `uncertain` if the outcome was lost (read it again at the `Location`
+URL). The receiver prints:
+
+```text
+verified test delivery test_5
+```
+
+</Step>
+<Step title="Watch live events">
+
+The sample account sends Testnet XLM all the time, so live transfers start
+arriving within a minute:
+
+```text
+verified live token_transfer transfer testnet:5331461:24 ledger 5331461
+verified live token_transfer transfer testnet:5331461:25 ledger 5331461
+verified live token_transfer transfer testnet:5331461:28 ledger 5331461
+```
+
+Each line is a delivery whose signature and signed context passed
+verification. To see what failed instead, list recent deliveries:
+
+```bash
+curl --fail-with-body -sS -G "$WEBHOOKS_URL/v1/subscriptions/$SUBSCRIPTION_ID/deliveries" \
+  --data-urlencode limit=5 \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" | jq '.deliveries[] | {event_id, status, attempts, response_code, last_error}'
+```
+
+</Step>
+<Step title="Clean up">
+
+The sample account is busy: about 335 matching transfers an hour, so it uses
+the Free plan's 1,000 deliveries a day in about 3 hours. After that, the
+endpoint pauses until 00:00 UTC (see [Plans](/webhooks/overview#plans)).
+Delete the subscription when you are done; this also frees your Free endpoint:
+
+```bash
+export ETAG="$(curl --fail-with-body -sS -o /dev/null -D - \
+  "$WEBHOOKS_URL/v1/subscriptions/$SUBSCRIPTION_ID" \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" \
+  | awk 'tolower($1) == "etag:" { sub(/\r$/, "", $2); print $2 }')"
+```
+
+{/* not-run: deletes the subscription */}
+```bash
+curl --fail-with-body -sS -X DELETE "$WEBHOOKS_URL/v1/subscriptions/$SUBSCRIPTION_ID" \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" \
+  -H "If-Match: $ETAG" \
+  -H "Idempotency-Key: $(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)" \
+  | jq '.subscription.effective_state'
+
+rm webhook-secret.txt subscription.json  # the first holds the signing secret
+```
+
+Stop the receiver and the tunnel with Ctrl+C.
+
+</Step>
+</Steps>
+
+## Next
+
+- [Receive and verify](/webhooks/receive): every header, retries, timeouts and
+  deduplication for production receivers.
+- [Webhooks overview](/webhooks/overview): event types, filters, plans and
+  delivery guarantees.
+- [Manage subscriptions](/webhooks/lifecycle): pause, change filters or the
+  target, and rotate the signing key.
+- [Go live on Mainnet](/webhooks/overview#go-live-on-mainnet): the Mainnet
+  host, key and plan.

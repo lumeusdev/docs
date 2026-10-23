@@ -1,0 +1,903 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Lumeus RPC: getTransaction",
+    "version": "2026-09-15",
+    "description": "Lumeus RPC: Stellar JSON-RPC 2.0 over `POST /`, with Lumeus keys, metering and limits. Sign up at https://app.lumeus.dev: Free, Starter, Growth and Scale plans are self-serve, Enterprise by agreement.\n\n- **Pricing.** Testnet is free: Testnet requests cost no credits and are never billed. Each organization can make 10,000 Testnet requests a day across Activity, Assets and RPC (unlimited on Enterprise); the count resets at 00:00 UTC, and a request over it answers 429 rate_limited with Retry-After set to the seconds until then. Mainnet requests draw from the plan's monthly credits. A Mainnet call costs its method credits plus one credit per started 64 KiB of response. Each call of a batch counts as one request, and a batch that would cross the daily Testnet cap is refused whole. Plans, limits and credit weights: `GET https://api.lumeus.dev/v1/plans`.\n- **Authentication.** Send `Authorization: Bearer <key>`. Testnet: `lum_test_…`; Mainnet: `lum_live_…`. A key works only on its own network, so pick the server that matches it (the other network answers 401). Publishable `lum_pub_…` keys call read-only methods only, from an allowed browser origin. Dashboard sessions and webhook keys are not accepted.\n- **Headers.** Every response carries X-Request-Id; authenticated responses carry RateLimit-Limit, RateLimit-Remaining and RateLimit-Reset; 429 and 503 carry Retry-After.\n- **Errors.** JSON-RPC 2.0 error objects. Gateway errors carry the machine-readable code as the string error.data and the request ID as error.request_id (see [errors](/guides/errors)). A JSON-RPC error can arrive with HTTP 200, from the node or for one call of a batch, so check error before reading result. The REST routes (`/operations/...`, `/healthz`, `/readyz`) answer flat JSON errors.\n- **CORS.** Browser calls (CORS) are allowed from https://docs.lumeus.dev (the Try it playground of this reference) and https://app.lumeus.dev only, without cookies; responses expose ETag, Link, Location, Retry-After, X-Request-Id, X-Lumeus-Operation-Id, X-Lumeus-Idempotency and RateLimit-Limit, RateLimit-Remaining and RateLimit-Reset (errors included). Other websites cannot read responses made with a server key: use a publishable key with your own allowed origins ([browser keys](/guides/browser-keys)).",
+    "license": {
+      "name": "Lumeus API contract"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://rpc-testnet.lumeus.dev",
+      "description": "Testnet (default)"
+    },
+    {
+      "url": "https://rpc.lumeus.dev",
+      "description": "Mainnet"
+    }
+  ],
+  "security": [
+    {
+      "Bearer": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "JSON-RPC",
+      "description": "Stellar JSON-RPC 2.0 over `POST /`: one call or a batch of up to 20. Each method has its own page with parameters, result fields and a real response."
+    }
+  ],
+  "paths": {
+    "/": {
+      "post": {
+        "operationId": "getTransaction",
+        "tags": [
+          "JSON-RPC"
+        ],
+        "summary": "getTransaction",
+        "description": "Returns one transaction by hash: its status (SUCCESS, FAILED or NOT_FOUND), ledger, and envelope, result and metadata XDR.\n\n- On Mainnet a call costs 1 credit plus one per started 64 KiB of response; Testnet calls are free and count toward the daily Testnet request cap.\n- Send an id: a call without one is a notification and gets an empty 204.\n- The result fields are listed under the 200 response.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Optional, and not used for deduplication: the response then carries X-Lumeus-Idempotency: ignored. To retry sendTransaction safely, resubmit the same signed envelope (the node answers DUPLICATE).",
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128,
+              "example": "retry-0001-2026-10-22"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/getTransaction"
+              },
+              "example": {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getTransaction",
+                "params": {
+                  "hash": "882b45bca4c8e7e0b2b38825983232ec6bca066605aed8de4579d0842101fa98"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The getTransaction result. Check error before reading result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RPCResponse"
+                },
+                "example": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "result": {
+                    "latestLedger": 5334485,
+                    "latestLedgerCloseTime": "1792696012",
+                    "oldestLedger": 5244415,
+                    "oldestLedgerCloseTime": "1792245662",
+                    "status": "SUCCESS",
+                    "txHash": "882b45bca4c8e7e0b2b38825983232ec6bca066605aed8de4579d0842101fa98",
+                    "applicationOrder": 1,
+                    "feeBump": false,
+                    "envelopeXdr": "AAAAAgAAAACcZ1ybx5lkJIiM5fmN7mXgzyoKLHW5d4g/ZXlUd2gJ/gAAD6AAUWWnAAAABQAAAAEAAAAAAAAAAAAAAABq2l6nAAAAAAAAAAQAAAAAAAAAEAAA...[truncated from 584 characters]",
+                    "resultXdr": "AAAAAAAAAZAAAAAAAAAABAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAAAAAAAAAAAAARAAAAAAAAAAA=",
+                    "resultMetaXdr": "AAAABAAAAAAAAAACAAAAAwBRZbYAAAAAAAAAAJxnXJvHmWQkiIzl+Y3uZeDPKgosdbl3iD9leVR3aAn+AAAAF0h24PgAUWWnAAAABAAAAAAAAAAAAAAAAAAA...[truncated from 2584 characters]",
+                    "events": {
+                      "transactionEventsXdr": [
+                        "AAAAAAAAAAAAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAABAAAAAAAAAAIAAAAPAAAAA2ZlZQAAAAASAAAAAAAAAACcZ1ybx5lkJIiM5fmN7mXgzyoKLHW5d4g/ZXlUd2gJ/gAAAAoAAAAAAAAAAAAAAAAAAAGQ"
+                      ],
+                      "contractEventsXdr": [
+                        [],
+                        [
+                          "AAAAAAAAAAHXkotywnA8z+r365/0701QSlWouXn8m0UOoshCtNHOYQAAAAEAAAAAAAAABAAAAA8AAAAIdHJhbnNmZXIAAAASAAAAAAAAAACcZ1ybx5lkJIiM5fmN7mXgzyoKLHW5d4g/ZXlUd2gJ/gAAABIAAAAAAAAAAAuH9uhsg+sBotRECzALK+Bj26cmPA616xPyp+q9unAtAAAADgAAAAZuYXRpdmUAAAAAAAoAAAAAAAAAAAAAAAAAAAAA"
+                        ],
+                        [],
+                        []
+                      ]
+                    },
+                    "ledger": 5334454,
+                    "createdAt": "1792695857"
+                  }
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Identifier of this request: req_ followed by 24 hex characters. Error bodies repeat it as request_id. Quote it when contacting support.",
+                "schema": {
+                  "type": "string",
+                  "pattern": "^req_[0-9a-f]{24}$"
+                }
+              },
+              "RateLimit-Limit": {
+                "description": "Requests per minute of the bucket that answered: the plan rate, the dashboard session floor of 120, or a publishable key's per-IP rate.",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "description": "Whole requests left in the bucket after this one.",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "description": "Seconds until the bucket is full again.",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Lumeus-Idempotency": {
+                "description": "ignored when you sent an Idempotency-Key: RPC does not deduplicate. Resubmit the same signed envelope to retry sendTransaction safely.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "ignored"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON (-32700), an invalid request or a batch outside 1 to 20 calls (-32600), an unsupported method (-32601) or invalid params (-32602). error.data is invalid_request; fix the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RPCResponse"
+                },
+                "examples": {
+                  "Invalid params": {
+                    "summary": "Invalid params (-32602)",
+                    "value": {
+                      "jsonrpc": "2.0",
+                      "id": 1,
+                      "error": {
+                        "code": -32602,
+                        "message": "getTransaction: 64-character transaction hash required",
+                        "data": "invalid_request",
+                        "request_id": "req_6f1c2a9b0e4d4c7a8b3f5e21"
+                      }
+                    }
+                  },
+                  "Unsupported method": {
+                    "summary": "Unsupported method (-32601)",
+                    "value": {
+                      "jsonrpc": "2.0",
+                      "id": 1,
+                      "error": {
+                        "code": -32601,
+                        "message": "unsupported RPC method",
+                        "data": "invalid_request",
+                        "request_id": "req_6f1c2a9b0e4d4c7a8b3f5e21"
+                      }
+                    }
+                  },
+                  "Invalid JSON": {
+                    "summary": "Invalid JSON (-32700, id null)",
+                    "value": {
+                      "jsonrpc": "2.0",
+                      "id": null,
+                      "error": {
+                        "code": -32700,
+                        "message": "invalid JSON",
+                        "data": "invalid_request",
+                        "request_id": "req_6f1c2a9b0e4d4c7a8b3f5e21"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Identifier of this request: req_ followed by 24 hex characters. Error bodies repeat it as request_id. Quote it when contacting support.",
+                "schema": {
+                  "type": "string",
+                  "pattern": "^req_[0-9a-f]{24}$"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/HTTP401"
+          },
+          "402": {
+            "$ref": "#/components/responses/HTTP402"
+          },
+          "403": {
+            "$ref": "#/components/responses/HTTP403"
+          },
+          "405": {
+            "$ref": "#/components/responses/HTTP405"
+          },
+          "413": {
+            "$ref": "#/components/responses/HTTP413"
+          },
+          "429": {
+            "$ref": "#/components/responses/HTTP429"
+          },
+          "503": {
+            "$ref": "#/components/responses/HTTP503"
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "cURL",
+            "source": "curl --fail-with-body -sS -X POST 'https://rpc-testnet.lumeus.dev/' \\\n  -H \"Authorization: Bearer $LUMEUS_API_KEY\" \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getTransaction\",\"params\":{\"hash\":\"882b45bca4c8e7e0b2b38825983232ec6bca066605aed8de4579d0842101fa98\"}}'"
+          },
+          {
+            "lang": "javascript",
+            "label": "JavaScript",
+            "source": "// Node 18+ (ES module)\nconst res = await fetch('https://rpc-testnet.lumeus.dev/', {\n  method: 'POST',\n  headers: {\n    Authorization: `Bearer ${process.env.LUMEUS_API_KEY}`,\n    'Content-Type': 'application/json',\n  },\n  body: JSON.stringify({\n    \"jsonrpc\": \"2.0\",\n    \"id\": 1,\n    \"method\": \"getTransaction\",\n    \"params\": {\n      \"hash\": \"882b45bca4c8e7e0b2b38825983232ec6bca066605aed8de4579d0842101fa98\"\n    }\n  }),\n});\nconsole.log(res.status, JSON.stringify(await res.json(), null, 2));"
+          },
+          {
+            "lang": "python",
+            "label": "Python",
+            "source": "import json\nimport os\n\nimport requests\n\nres = requests.post(\n    \"https://rpc-testnet.lumeus.dev/\",\n    headers={\"Authorization\": f\"Bearer {os.environ['LUMEUS_API_KEY']}\"},\n    json={\n        \"jsonrpc\": \"2.0\",\n        \"id\": 1,\n        \"method\": \"getTransaction\",\n        \"params\": {\n            \"hash\": \"882b45bca4c8e7e0b2b38825983232ec6bca066605aed8de4579d0842101fa98\"\n        }\n    },\n    timeout=30,\n)\nprint(res.status_code, json.dumps(res.json(), indent=2))"
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "Bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Send `Authorization: Bearer <key>`. Testnet: `lum_test_…`; Mainnet: `lum_live_…`. A key works only on its own network, so pick the server that matches it (the other network answers 401). Publishable `lum_pub_…` keys call read-only methods only, from an allowed browser origin. Dashboard sessions and webhook keys are not accepted."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Human-readable message. It may change; branch on code."
+          },
+          "code": {
+            "type": "string",
+            "description": "Machine-readable error code. Branch on code, not on the error text, which may change. RPC carries the same codes as the string error.data of a JSON-RPC error. invalid_request: 400: invalid input, including a malformed Idempotency-Key or an unknown or repeated query parameter (Webhooks also uses it for an oversized request body, 413). Fix the request; do not retry unchanged. unauthorized: 401: missing, revoked, invalid or wrong-network credential. payment_required: 402 (Mainnet): monthly credit quota exhausted on a hard-capped plan. forbidden: 403: the key or account policy does not allow this action. not_found: 404 (Webhooks also 410): the resource does not exist in this organization and network. topic_search_disabled: 404: contract-event topic search is not enabled on this network. method_not_allowed: 405: the route does not accept this method. conflict: 409: conflicting request identity, idempotency key, funding or recovery state. generation_changed: 409: the index generation or network changed since the snapshot was taken; restart the walk without generation and snapshot_ledger. history_unavailable: 409 (Assets): as_of_ledger is not answered from the balance history; start a snapshot job (POST /snapshots) or retry later. precondition_failed: 412 (Webhooks): the subscription version changed; fetch the current ETag. response_too_large: 413: the result exceeds the response budget; lower limit or narrow the request. precondition_required: 428 (Webhooks): If-Match with the subscription ETag is required. rate_limited: 429: a rate, concurrency or credit-cap limit was reached, or (Activity, Assets and RPC on Testnet) the daily Testnet request cap (message `daily Testnet request cap of 10000 reached; resets at 00:00 UTC`, Retry-After until 00:00 UTC). Wait Retry-After seconds (a refused request consumes nothing). A Retry-After greater than 60 means the daily Testnet cap: wait until 00:00 UTC or switch to Mainnet. RPC carries it as the string error.data. internal_error: 500 or another unexpected 5xx; quote request_id when contacting support. not_implemented: 501: the feature is not enabled on this host. busy: 503: reads are saturated (the queue wait expired or the database refused another query or ran short of memory). Retry the same request after Retry-After (2) seconds. query_timeout: 503: the read ran out of time. Do not retry unchanged right away: narrow the ledger range (since_ledger/until_ledger) or lower limit; Retry-After is 30. index_not_ready: 503: the index or snapshot is not ready yet or is rebuilding; retry after Retry-After seconds. topic_coverage: 503: the effective range is outside the contract-event topic index coverage (the message states it); pass a range inside it or retry after Retry-After (60) seconds. unavailable: 503: another temporary failure (billing, rate limiter, queue); retry after Retry-After seconds.",
+            "enum": [
+              "invalid_request",
+              "unauthorized",
+              "payment_required",
+              "forbidden",
+              "not_found",
+              "topic_search_disabled",
+              "method_not_allowed",
+              "conflict",
+              "generation_changed",
+              "history_unavailable",
+              "precondition_failed",
+              "response_too_large",
+              "precondition_required",
+              "rate_limited",
+              "internal_error",
+              "not_implemented",
+              "busy",
+              "query_timeout",
+              "index_not_ready",
+              "topic_coverage",
+              "unavailable"
+            ]
+          },
+          "request_id": {
+            "type": "string",
+            "description": "Identifier of this request, the same value as the X-Request-Id header. Quote it when contacting support."
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "getTransaction": {
+        "type": "object",
+        "properties": {
+          "jsonrpc": {
+            "type": "string",
+            "description": "Always 2.0.",
+            "enum": [
+              "2.0"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "description": "Request ID, echoed in the response. Send one on every call: a call without an id is a notification, which runs but gets an empty 204 response. A string ID (at most 1024 bytes) also works and is echoed unchanged.",
+            "example": 1
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "getTransaction"
+            ]
+          },
+          "params": {
+            "type": "object",
+            "properties": {
+              "hash": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{64}$",
+                "description": "64-character hexadecimal transaction hash. RPC keeps about 7 days: an older (or unknown) hash answers status NOT_FOUND. The prefilled example was a recent Testnet transaction when these docs were built; if Try it answers NOT_FOUND, take a txHash from getTransactions with a recent startLedger. For older transactions use the Activity API (`GET /transactions/{hash}`)."
+              },
+              "xdrFormat": {
+                "type": "string",
+                "description": "base64 (default) returns XDR fields as base64 strings; json returns them decoded as JSON objects.",
+                "enum": [
+                  "base64",
+                  "json"
+                ]
+              }
+            },
+            "required": [
+              "hash"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "jsonrpc",
+          "id",
+          "method",
+          "params"
+        ],
+        "title": "getTransaction",
+        "description": "Returns one transaction by hash: its status (SUCCESS, FAILED or NOT_FOUND), ledger, and envelope, result and metadata XDR. 1 credit plus one per started 64 KiB of response. Named params only (positional arrays are rejected). A params member set to null (as Python stellar-sdk sends for unset options) is treated as omitted at any depth."
+      },
+      "RPCError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "description": "JSON-RPC code. Gateway errors: -32700 parse error, -32600 invalid request (also a body over 1 MiB), -32601 unsupported method, -32602 invalid params, -32000 policy or availability (401, 402, 403, 413 response too large, 429, 503). Errors from the Stellar node keep its own code."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable; may change. Branch on data."
+          },
+          "data": {
+            "type": "string",
+            "description": "Gateway errors: the machine-readable code as a plain string, so that every Stellar SDK can parse it. The values are the shared error codes plus submission_outcome_unknown. Errors from the Stellar node keep the node's own data, if any. invalid_request: 400: invalid input, including a malformed Idempotency-Key or an unknown or repeated query parameter (Webhooks also uses it for an oversized request body, 413). Fix the request; do not retry unchanged. unauthorized: 401: missing, revoked, invalid or wrong-network credential. payment_required: 402 (Mainnet): monthly credit quota exhausted on a hard-capped plan. forbidden: 403: the key or account policy does not allow this action. not_found: 404 (Webhooks also 410): the resource does not exist in this organization and network. method_not_allowed: 405: the route does not accept this method. conflict: 409: conflicting request identity, idempotency key, funding or recovery state. response_too_large: 413: the result exceeds the response budget; lower limit or narrow the request. rate_limited: 429: a rate, concurrency or credit-cap limit was reached, or (Activity, Assets and RPC on Testnet) the daily Testnet request cap (message `daily Testnet request cap of 10000 reached; resets at 00:00 UTC`, Retry-After until 00:00 UTC). Wait Retry-After seconds (a refused request consumes nothing). A Retry-After greater than 60 means the daily Testnet cap: wait until 00:00 UTC or switch to Mainnet. RPC carries it as the string error.data. internal_error: 500 or another unexpected 5xx; quote request_id when contacting support. unavailable: 503: another temporary failure (billing, rate limiter, queue); retry after Retry-After seconds. submission_outcome_unknown: 503 (RPC sendTransaction only): the transaction reached the node but its answer was lost; poll getTransaction with error.transaction_hash before building a new transaction. Resubmitting the same signed envelope is safe (the node answers DUPLICATE)."
+          },
+          "request_id": {
+            "type": "string",
+            "description": "Gateway errors: the same value as the X-Request-Id header; quote it when contacting support."
+          },
+          "transaction_hash": {
+            "type": "string",
+            "description": "submission_outcome_unknown only: the hash of the submitted transaction. Poll getTransaction with it."
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "example": {
+          "code": -32000,
+          "message": "valid API key required",
+          "data": "unauthorized",
+          "request_id": "req_0123456789abcdef01234567"
+        }
+      },
+      "RPCResponse": {
+        "type": "object",
+        "properties": {
+          "jsonrpc": {
+            "type": "string",
+            "enum": [
+              "2.0"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "description": "The id of your call, echoed unchanged (a string id comes back as a string). null when the gateway cannot read the id, for example for invalid JSON.",
+            "nullable": true
+          },
+          "result": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/getTransactionResult"
+              }
+            ],
+            "description": "The getTransaction result, as returned by stellar-rpc 29."
+          },
+          "error": {
+            "$ref": "#/components/schemas/RPCError"
+          }
+        },
+        "required": [
+          "jsonrpc",
+          "id"
+        ],
+        "oneOf": [
+          {
+            "title": "Result",
+            "required": [
+              "result"
+            ],
+            "not": {
+              "required": [
+                "error"
+              ]
+            }
+          },
+          {
+            "title": "Error",
+            "required": [
+              "error"
+            ],
+            "not": {
+              "required": [
+                "result"
+              ]
+            }
+          }
+        ],
+        "description": "A JSON-RPC 2.0 response: result on success, error otherwise. A JSON-RPC error can arrive with HTTP 200 (for example from the node, or for one child of a batch). Gateway errors carry the code string in error.data and the request ID in error.request_id; they echo your id when the body is a parseable single request and use a null id when it cannot be determined. Preserve integer IDs exactly; avoid unsafe JavaScript numeric IDs. The gateway never answers 502 or 504."
+      },
+      "getTransactionResult": {
+        "type": "object",
+        "properties": {
+          "latestLedger": {
+            "type": "integer",
+            "description": "Latest ledger the node has."
+          },
+          "latestLedgerCloseTime": {
+            "type": "string",
+            "description": "Close time of latestLedger. Unix seconds, as a string.",
+            "pattern": "^[0-9]+$"
+          },
+          "oldestLedger": {
+            "type": "integer",
+            "description": "Oldest ledger the node still keeps (about 7 days back)."
+          },
+          "oldestLedgerCloseTime": {
+            "type": "string",
+            "description": "Close time of oldestLedger. Unix seconds, as a string.",
+            "pattern": "^[0-9]+$"
+          },
+          "status": {
+            "type": "string",
+            "description": "SUCCESS, FAILED, or NOT_FOUND (unknown, or older than the retention window).",
+            "enum": [
+              "SUCCESS",
+              "FAILED",
+              "NOT_FOUND"
+            ]
+          },
+          "txHash": {
+            "type": "string",
+            "description": "Transaction hash (of the fee-bump transaction for a fee bump)."
+          },
+          "applicationOrder": {
+            "type": "integer",
+            "description": "Position of the transaction in its ledger (1-based; 0 when NOT_FOUND)."
+          },
+          "feeBump": {
+            "type": "boolean",
+            "description": "True for a fee-bump transaction."
+          },
+          "envelopeXdr": {
+            "type": "string",
+            "description": "TransactionEnvelope. Base64 XDR (with xdrFormat json, the matching Json field instead)."
+          },
+          "envelopeJson": {
+            "description": "TransactionEnvelope. Decoded JSON; only with xdrFormat json."
+          },
+          "resultXdr": {
+            "type": "string",
+            "description": "TransactionResult. Base64 XDR (with xdrFormat json, the matching Json field instead)."
+          },
+          "resultJson": {
+            "description": "TransactionResult. Decoded JSON; only with xdrFormat json."
+          },
+          "resultMetaXdr": {
+            "type": "string",
+            "description": "TransactionMeta. Base64 XDR (with xdrFormat json, the matching Json field instead)."
+          },
+          "resultMetaJson": {
+            "description": "TransactionMeta. Decoded JSON; only with xdrFormat json."
+          },
+          "diagnosticEventsXdr": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Base64 DiagnosticEvent XDR, when diagnostics are recorded."
+          },
+          "diagnosticEventsJson": {
+            "type": "array",
+            "items": {},
+            "description": "Decoded diagnostic events; only with xdrFormat json."
+          },
+          "events": {
+            "type": "object",
+            "properties": {
+              "transactionEventsXdr": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Base64 TransactionEvent XDR (for example fee events)."
+              },
+              "transactionEventsJson": {
+                "type": "array",
+                "items": {},
+                "description": "Decoded transaction events; only with xdrFormat json."
+              },
+              "contractEventsXdr": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "description": "Base64 ContractEvent XDR, one inner list per operation."
+              },
+              "contractEventsJson": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {}
+                },
+                "description": "Decoded contract events; only with xdrFormat json."
+              }
+            },
+            "description": "The transaction's events."
+          },
+          "ledger": {
+            "type": "integer",
+            "description": "Ledger that included the transaction (0 when NOT_FOUND)."
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "Close time of the including ledger (\"0\" when NOT_FOUND). Unix seconds, as a string.",
+            "pattern": "^[0-9]+$"
+          }
+        },
+        "required": [
+          "latestLedger",
+          "latestLedgerCloseTime",
+          "oldestLedger",
+          "oldestLedgerCloseTime",
+          "status",
+          "txHash",
+          "applicationOrder",
+          "feeBump",
+          "ledger",
+          "createdAt"
+        ],
+        "title": "getTransaction result"
+      }
+    },
+    "responses": {
+      "HTTP401": {
+        "description": "Missing, invalid or revoked key, or a key for the other network (-32000, error.data unauthorized). The message names the right host.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RPCResponse"
+            },
+            "example": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "error": {
+                "code": -32000,
+                "message": "valid API key required",
+                "data": "unauthorized",
+                "request_id": "req_6f1c2a9b0e4d4c7a8b3f5e21"
+              }
+            }
+          }
+        },
+        "headers": {
+          "X-Request-Id": {
+            "description": "Identifier of this request: req_ followed by 24 hex characters. Error bodies repeat it as request_id. Quote it when contacting support.",
+            "schema": {
+              "type": "string",
+              "pattern": "^req_[0-9a-f]{24}$"
+            }
+          }
+        }
+      },
+      "HTTP402": {
+        "description": "Mainnet only: the Free plan's monthly credits are used up (-32000, error.data payment_required). Testnet calls cost no credits.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RPCResponse"
+            },
+            "example": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "error": {
+                "code": -32000,
+                "message": "monthly credit limit reached",
+                "data": "payment_required",
+                "request_id": "req_6f1c2a9b0e4d4c7a8b3f5e21"
+              }
+            }
+          }
+        },
+        "headers": {
+          "X-Request-Id": {
+            "description": "Identifier of this request: req_ followed by 24 hex characters. Error bodies repeat it as request_id. Quote it when contacting support.",
+            "schema": {
+              "type": "string",
+              "pattern": "^req_[0-9a-f]{24}$"
+            }
+          }
+        }
+      },
+      "HTTP403": {
+        "description": "This key cannot make this call (-32000, error.data forbidden): a read-only key calling sendTransaction, alone or in a batch, or a publishable key calling sendTransaction or simulateTransaction or sent from an origin it does not allow. Refused before execution or billing.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RPCResponse"
+            },
+            "examples": {
+              "Read-only key": {
+                "summary": "Read-only key calling sendTransaction",
+                "value": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "error": {
+                    "code": -32000,
+                    "message": "this API key is read-only and cannot submit transactions",
+                    "data": "forbidden",
+                    "request_id": "req_6f1c2a9b0e4d4c7a8b3f5e21"
+                  }
+                }
+              },
+              "Publishable key": {
+                "summary": "Publishable key calling a write method",
+                "value": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "error": {
+                    "code": -32000,
+                    "message": "publishable keys can only call read-only RPC methods; sendTransaction requires a secret key on your server",
+                    "data": "forbidden",
+                    "request_id": "req_6f1c2a9b0e4d4c7a8b3f5e21"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "headers": {
+          "X-Request-Id": {
+            "description": "Identifier of this request: req_ followed by 24 hex characters. Error bodies repeat it as request_id. Quote it when contacting support.",
+            "schema": {
+              "type": "string",
+              "pattern": "^req_[0-9a-f]{24}$"
+            }
+          }
+        }
+      },
+      "HTTP405": {
+        "description": "This path does not accept the HTTP method you sent (code method_not_allowed). The Allow header lists the methods it accepts.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "code": "method_not_allowed",
+              "error": "method GET is not allowed on /; allowed: POST",
+              "request_id": "req_6f1c2a9b0e4d4c7a8b3f5e21"
+            }
+          }
+        },
+        "headers": {
+          "X-Request-Id": {
+            "description": "Identifier of this request: req_ followed by 24 hex characters. Error bodies repeat it as request_id. Quote it when contacting support.",
+            "schema": {
+              "type": "string",
+              "pattern": "^req_[0-9a-f]{24}$"
+            }
+          }
+        }
+      },
+      "HTTP413": {
+        "description": "The request body is over 1 MiB (error.data invalid_request), or the answer exceeded its response ceiling (error.data response_too_large): lower pagination.limit or request fewer keys.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RPCResponse"
+            },
+            "examples": {
+              "Body over 1 MiB": {
+                "summary": "Request body over 1 MiB (id null)",
+                "value": {
+                  "jsonrpc": "2.0",
+                  "id": null,
+                  "error": {
+                    "code": -32600,
+                    "message": "RPC request exceeds 1048576 bytes",
+                    "data": "invalid_request",
+                    "request_id": "req_6f1c2a9b0e4d4c7a8b3f5e21"
+                  }
+                }
+              },
+              "Response too large": {
+                "summary": "Response over its ceiling",
+                "value": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "error": {
+                    "code": -32000,
+                    "message": "RPC response exceeds its size limit; request fewer or smaller methods",
+                    "data": "response_too_large",
+                    "request_id": "req_6f1c2a9b0e4d4c7a8b3f5e21"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "headers": {
+          "X-Request-Id": {
+            "description": "Identifier of this request: req_ followed by 24 hex characters. Error bodies repeat it as request_id. Quote it when contacting support.",
+            "schema": {
+              "type": "string",
+              "pattern": "^req_[0-9a-f]{24}$"
+            }
+          }
+        }
+      },
+      "HTTP429": {
+        "description": "error.data rate_limited: the plan rate (each batch child counts as one request), gateway concurrency (after a short queue), node capacity, or on Testnet the daily Testnet request cap (each batch child counts; a batch that would cross the cap is refused whole, and every call in it gets the error; Retry-After is the time until 00:00 UTC). A call refused for node capacity was not executed, including sendTransaction. A request made only of notifications gets the status with an empty body. Wait Retry-After seconds. A rate_limited answer whose Retry-After is greater than 60 is the daily Testnet cap: wait until 00:00 UTC or switch to Mainnet.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RPCResponse"
+            },
+            "examples": {
+              "Daily Testnet cap": {
+                "summary": "Daily Testnet request cap (Retry-After: seconds until 00:00 UTC)",
+                "value": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "error": {
+                    "code": -32000,
+                    "message": "daily Testnet request cap of 10000 reached; resets at 00:00 UTC",
+                    "data": "rate_limited",
+                    "request_id": "req_6f1c2a9b0e4d4c7a8b3f5e21"
+                  }
+                }
+              },
+              "Plan RPC rate": {
+                "summary": "Plan RPC rate (Retry-After: a few seconds)",
+                "value": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "error": {
+                    "code": -32000,
+                    "message": "RPC rate limit exceeded",
+                    "data": "rate_limited",
+                    "request_id": "req_6f1c2a9b0e4d4c7a8b3f5e21"
+                  }
+                }
+              },
+              "Node capacity": {
+                "summary": "Node capacity (not executed)",
+                "value": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "error": {
+                    "code": -32000,
+                    "message": "RPC node capacity exceeded; the call was not executed, retry after Retry-After seconds",
+                    "data": "rate_limited",
+                    "request_id": "req_6f1c2a9b0e4d4c7a8b3f5e21"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "headers": {
+          "X-Request-Id": {
+            "description": "Identifier of this request: req_ followed by 24 hex characters. Error bodies repeat it as request_id. Quote it when contacting support.",
+            "schema": {
+              "type": "string",
+              "pattern": "^req_[0-9a-f]{24}$"
+            }
+          },
+          "RateLimit-Limit": {
+            "description": "Requests per minute of the bucket that answered: the plan rate, the dashboard session floor of 120, or a publishable key's per-IP rate.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "RateLimit-Remaining": {
+            "description": "Whole requests left in the bucket after this one.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "RateLimit-Reset": {
+            "description": "Seconds until the bucket is full again.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "Retry-After": {
+            "description": "Seconds to wait before retrying.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "HTTP503": {
+        "description": "error.data unavailable (node failure or invalid node answer, billing or rate limiter unavailable; not charged; wait Retry-After seconds) or submission_outcome_unknown (sendTransaction reached the node but its answer was lost: poll getTransaction with error.transaction_hash; resubmitting the same signed envelope is safe).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RPCResponse"
+            },
+            "examples": {
+              "Node unavailable": {
+                "summary": "Node unavailable (Retry-After 2)",
+                "value": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "error": {
+                    "code": -32000,
+                    "message": "RPC node unavailable or returned an invalid response; retry after Retry-After seconds",
+                    "data": "unavailable",
+                    "request_id": "req_6f1c2a9b0e4d4c7a8b3f5e21"
+                  }
+                }
+              },
+              "Outcome unknown": {
+                "summary": "sendTransaction outcome unknown",
+                "value": {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "error": {
+                    "code": -32000,
+                    "message": "sendTransaction outcome unknown: the node may have received transaction 38d79c239609d610d4d18b4e8dd823773a942389fff309bf2de13f8efdfc7453; poll getTransaction with this hash before building a new transaction (resubmitting the same envelope is safe)",
+                    "data": "submission_outcome_unknown",
+                    "request_id": "req_6f1c2a9b0e4d4c7a8b3f5e21",
+                    "transaction_hash": "38d79c239609d610d4d18b4e8dd823773a942389fff309bf2de13f8efdfc7453"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "headers": {
+          "X-Request-Id": {
+            "description": "Identifier of this request: req_ followed by 24 hex characters. Error bodies repeat it as request_id. Quote it when contacting support.",
+            "schema": {
+              "type": "string",
+              "pattern": "^req_[0-9a-f]{24}$"
+            }
+          },
+          "Retry-After": {
+            "description": "Seconds to wait before retrying.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,229 @@
+---
+title: Submit transactions
+description: A complete Testnet payment, from a new keypair to a confirmed result.
+---
+
+This page sends a real 10 XLM payment on Testnet through Lumeus RPC. You build
+and sign the transaction locally; Lumeus only ever sees the signed envelope, never
+your secret key.
+
+The script runs these steps:
+
+<Steps>
+  <Step title="Create and fund accounts">
+    Generate a sender and a recipient keypair and fund both with Friendbot.
+  </Step>
+  <Step title="Build the payment">
+    Load the sender's sequence number with `getAccount` and build a `transfer`
+    call on the native XLM asset contract.
+  </Step>
+  <Step title="Prepare">
+    `prepareTransaction` calls `simulateTransaction` and adds the resource fee,
+    footprint and authorization.
+  </Step>
+  <Step title="Sign and send">
+    Sign locally, then call `sendTransaction`. A `PENDING` status means the node
+    accepted it.
+  </Step>
+  <Step title="Poll for the result">
+    Call `getTransaction` every 2 seconds until the status is `SUCCESS` or
+    `FAILED`.
+  </Step>
+</Steps>
+
+## Run it
+
+Set `LUMEUS_API_KEY` to your Testnet `lum_test_` key, then install the SDK and
+run the script. Each run sends 2 Friendbot requests and about 7 RPC calls,
+which count toward the daily Testnet cap of 10,000 requests and cost no
+credits.
+
+<CodeGroup>
+
+```js pay.mjs
+// npm install @stellar/stellar-sdk && node pay.mjs
+import {
+  Asset, BASE_FEE, Contract, Keypair, Networks, TransactionBuilder, nativeToScVal, rpc,
+} from "@stellar/stellar-sdk";
+
+const server = new rpc.Server("https://rpc-testnet.lumeus.dev", {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+
+// 1. Create two Testnet accounts and fund them with Friendbot.
+const sender = Keypair.random();
+const recipient = Keypair.random();
+for (const kp of [sender, recipient]) {
+  const res = await fetch(`https://friendbot.stellar.org/?addr=${kp.publicKey()}`);
+  if (!res.ok) throw new Error(`Friendbot ${res.status}`);
+}
+console.log("sender", sender.publicKey());
+
+// 2. Build a 10 XLM payment through the native asset contract.
+const xlm = new Contract(Asset.native().contractId(Networks.TESTNET));
+const account = await server.getAccount(sender.publicKey());
+const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: Networks.TESTNET })
+  .addOperation(xlm.call("transfer",
+    nativeToScVal(sender.publicKey(), { type: "address" }),
+    nativeToScVal(recipient.publicKey(), { type: "address" }),
+    nativeToScVal(100_000_000n, { type: "i128" }))) // 10 XLM in stroops
+  .setTimeout(60)
+  .build();
+
+// 3. Simulate and add resources, fees and auth (simulateTransaction).
+const prepared = await server.prepareTransaction(tx);
+
+// 4. Sign locally. Only the signed envelope leaves your machine.
+prepared.sign(sender);
+
+// 5. Submit.
+const sent = await server.sendTransaction(prepared);
+console.log("send", sent.status, sent.hash);
+if (sent.status !== "PENDING" && sent.status !== "DUPLICATE") {
+  throw new Error(`sendTransaction ${sent.status}`);
+}
+
+// 6. Poll getTransaction until it leaves NOT_FOUND.
+let result;
+for (let i = 0; i < 30; i++) {
+  result = await server.getTransaction(sent.hash);
+  if (result.status !== "NOT_FOUND") break;
+  await new Promise((r) => setTimeout(r, 2000));
+}
+if (result.status === "NOT_FOUND") throw new Error(`still NOT_FOUND after 60 s: poll ${sent.hash} again`);
+console.log("result", result.status, "ledger", result.ledger);
+```
+
+```python pay.py
+# pip install stellar-sdk && python pay.py
+import os
+import time
+
+import requests
+from stellar_sdk import Asset, Keypair, Network, SorobanServer, TransactionBuilder, scval
+from stellar_sdk.client.requests_client import RequestsClient
+
+key = os.environ["LUMEUS_API_KEY"]
+# num_retries=0: raise 429/503 at once instead of sleeping through Retry-After.
+server = SorobanServer(
+    "https://rpc-testnet.lumeus.dev",
+    client=RequestsClient(num_retries=0, custom_headers={"Authorization": f"Bearer {key}"}),
+)
+
+# 1. Create two Testnet accounts and fund them with Friendbot.
+sender, recipient = Keypair.random(), Keypair.random()
+for kp in (sender, recipient):
+    requests.get("https://friendbot.stellar.org/", params={"addr": kp.public_key}, timeout=30).raise_for_status()
+print("sender", sender.public_key)
+
+# 2. Build a 10 XLM payment through the native asset contract.
+xlm = Asset.native().contract_id(Network.TESTNET_NETWORK_PASSPHRASE)
+account = server.load_account(sender.public_key)
+tx = (
+    TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)
+    .append_invoke_contract_function_op(
+        contract_id=xlm,
+        function_name="transfer",
+        parameters=[
+            scval.to_address(sender.public_key),
+            scval.to_address(recipient.public_key),
+            scval.to_int128(100_000_000),  # 10 XLM in stroops
+        ],
+    )
+    .set_timeout(60)
+    .build()
+)
+
+# 3. Simulate and add resources, fees and auth (simulateTransaction).
+tx = server.prepare_transaction(tx)
+
+# 4. Sign locally. Only the signed envelope leaves your machine.
+tx.sign(sender)
+
+# 5. Submit.
+sent = server.send_transaction(tx)
+print("send", sent.status.value, sent.hash)
+if sent.status.value not in ("PENDING", "DUPLICATE"):
+    raise SystemExit(f"sendTransaction {sent.status.value}: {sent.error_result_xdr}")
+
+# 6. Poll getTransaction until it leaves NOT_FOUND.
+for _ in range(30):
+    result = server.get_transaction(sent.hash)
+    if result.status.value != "NOT_FOUND":
+        break
+    time.sleep(2)
+if result.status.value == "NOT_FOUND":
+    raise SystemExit(f"still NOT_FOUND after 60 s: poll {sent.hash} again")
+print("result", result.status.value, "ledger", result.ledger)
+```
+
+</CodeGroup>
+
+Output (the keys and hash differ on every run):
+
+```text
+sender GA2HFNBOTVUIO4NOFSB5BZNEV45MSB33REC7G76W4AETFM7DM2U22UIO
+send PENDING ea640b452e9dcca3c685762a8e175c0f2b4137511e391f8a853b9d958ffb315f
+result SUCCESS ledger 5331482
+```
+
+`getTransaction` then returns the full outcome. Trimmed:
+
+```json
+{
+  "status": "SUCCESS",
+  "txHash": "ea640b452e9dcca3c685762a8e175c0f2b4137511e391f8a853b9d958ffb315f",
+  "ledger": 5331482,
+  "createdAt": "1792680997",
+  "applicationOrder": 11,
+  "feeBump": false,
+  "envelopeXdr": "AAAAAgAAAAA0crQunWiH...",
+  "resultXdr": "AAAAAAAAGx4AAAAAAAAA...",
+  "resultMetaXdr": "AAAABAAAAAAAAAACAAAA..."
+}
+```
+
+For a classic operation such as `Operation.payment`, skip `prepareTransaction`:
+build, sign and send. Simulation applies only to Soroban (smart contract)
+operations.
+
+## Read the status
+
+| `sendTransaction` status | Meaning | What to do |
+| --- | --- | --- |
+| `PENDING` | The node accepted the transaction | Poll `getTransaction` with the hash. |
+| `DUPLICATE` | The node already has this transaction | Poll `getTransaction` with the hash. |
+| `TRY_AGAIN_LATER` | The node could not accept it now | Resend the same signed envelope after a few seconds. |
+| `ERROR` | The transaction was rejected | Decode `errorResultXdr`; fix and rebuild. |
+
+| `getTransaction` status | Meaning |
+| --- | --- |
+| `NOT_FOUND` | Not in a ledger yet, or older than the retained window (up to about 7 days) |
+| `SUCCESS` | Applied successfully |
+| `FAILED` | Included in a ledger but failed; the fee was charged |
+
+## If the send times out
+
+If `sendTransaction` reached the node but its answer was lost, Lumeus returns
+`503` with `error.data` `submission_outcome_unknown` and the hash in
+`error.transaction_hash`:
+
+```json
+{"jsonrpc":"2.0","id":"send-1","error":{"code":-32000,"message":"sendTransaction outcome unknown: …","data":"submission_outcome_unknown","request_id":"req_0123456789abcdef01234567","transaction_hash":"6af8…2ac0"}}
+```
+
+1. Poll `getTransaction` with that hash (or the hash you computed before
+   sending) until it is found or the transaction's time bound has passed.
+2. If you resend, send the same signed envelope. The node answers `DUPLICATE`,
+   so it cannot apply twice.
+3. Do not build a new transaction with a new sequence number until the first
+   one has expired.
+
+For retry-safe requests with an `Idempotency-Key`, see
+[idempotency and recovery](/guides/idempotency).
+
+## Next
+
+- [Stellar SDKs](/rpc/sdks): auth and error handling per SDK.
+- [Methods](/rpc/methods): limits for `simulateTransaction` and `sendTransaction`.
+- [RPC errors](/guides/errors#rpc-errors): every error code.

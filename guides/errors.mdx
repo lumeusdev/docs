@@ -1,0 +1,238 @@
+---
+title: Errors and retries
+description: Error bodies, HTTP statuses, machine-readable codes and retry rules.
+---
+
+Every Lumeus error carries a machine-readable `code` and a `request_id`. Branch
+on the HTTP status and `code`, never on the message text, which is for people
+and may change. This page lists the error shapes, every status and code, and
+what to do about each.
+
+## Error bodies
+
+REST errors (Activity, Assets and Webhooks) return
+`{"code": ..., "error": ..., "request_id": ...}`. RPC errors keep the JSON-RPC
+2.0 envelope and put the code in `error.data`. Every API response, success or
+error, also carries the same `request_id` in the `X-Request-Id` header (health
+checks excepted).
+
+<CodeGroup>
+```json Activity (400)
+{"code":"invalid_request","error":"unknown query parameter \"lmit\"; supported: order, limit, cursor, since_ledger, until_ledger, generation, snapshot_ledger, direction, include_fees","request_id":"req_d468f510e444f0d89d9b9fa9"}
+```
+
+```json Assets (400)
+{"code":"invalid_request","error":"unknown query parameter \"lmit\"; supported: kind, min_balance, include, asset, limit, cursor, as_of_ledger","request_id":"req_cc219718748369d1df8e9545"}
+```
+
+```json Webhooks (401)
+{"code":"unauthorized","error":"invalid session","request_id":"req_e64f7f9ad9fc395403b0d84c"}
+```
+
+```json RPC (401)
+{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"valid API key required","data":"unauthorized","request_id":"req_e489d680b0a1420bed5e057b"}}
+```
+</CodeGroup>
+
+Always check the HTTP status before parsing a success schema, and check for
+`error` in every JSON-RPC reply: RPC can return HTTP `200` with a method error
+from the Stellar node.
+
+## HTTP statuses
+
+| Status | What to do |
+| --- | --- |
+| 200 / 201 | Parse the product response. A new Free or paid webhook endpoint returns `201` already `active`. |
+| 202 | Work is accepted but not finished: a prepaid webhook create still `activating`, a webhook replay job, a repeated test still running, or a pending prepaid-workspace [operation](/guides/idempotency#pending-operations). Poll the returned status; do not start the work again. |
+| 204 | Success with no body: a Webhooks key revocation, or an RPC notification (a call without `id`). |
+| 400 / 413 | Fix the input. Unknown or repeated query parameters return `400` rather than being ignored. Do not retry unchanged. |
+| 401 | Check the key, the product and the network. The message names the right host for a wrong-network key. |
+| 402 | Mainnet credits are used up on Free, or the request reaches past the plan's history. Testnet never returns `402`. |
+| 403 | The key or account cannot do this (read key, publishable key, unconfirmed email, plan limit). |
+| 404 | Check the identifier, organization and network. |
+| 409 | Resolve the conflict: a generation change, an `Idempotency-Key` reused with a different request, or a resource state that does not allow the action. |
+| 410 | The resource or saved result is gone. A new request cannot restore it. |
+| 412 / 428 | Webhooks only: the subscription `ETag` is stale (`412`) or `If-Match` is missing (`428`). See [ETags](#etags-and-preconditions). |
+| 429 | Wait `Retry-After` seconds: a per-minute rate limit, or the daily Testnet request cap (`Retry-After` counts to 00:00 UTC). See [rate limits](/guides/rate-limits). |
+| 503 | Temporary; the `code` says why and `Retry-After` says when to retry. One exception: a webhook create that says the endpoint kind is [not enabled on this network](#webhooks-not-enabled-on-a-network) is a configuration state, so do not retry it in a loop. |
+| Other 5xx | Unexpected failure. A timeout is not proof that a write did not happen. |
+
+## Error codes
+
+New codes may be added; treat an unknown code by its HTTP status.
+
+| Code | Status | Meaning | What to do |
+| --- | --- | --- | --- |
+| `invalid_request` | 400 | Invalid input: a bad parameter, an unknown or repeated query parameter, or a malformed `Idempotency-Key`. Webhooks also uses it for an oversized request body (413). | Fix the request. Do not retry it unchanged. |
+| `unauthorized` | 401 | Missing, revoked, invalid or wrong-network key. | Check the key, product and network. |
+| `payment_required` | 402 | Mainnet credit quota used up, or the request reaches past the plan's history. | Upgrade, wait for the next period, or read a more recent range. |
+| `forbidden` | 403 | The key or account policy does not allow this action. | Use a key with the needed access. |
+| `not_found` | 404 | The resource does not exist in this organization and network. Webhooks also uses it for a deleted subscription (410). | Check the identifier, organization and network. |
+| `topic_search_disabled` | 404 | Contract-event topic search is not enabled on this network. | Use plain contract activity. |
+| `method_not_allowed` | 405 | The route does not accept this method. The `Allow` header lists the methods it accepts. | Use the documented method and path. |
+| `conflict` | 409 | Conflicting request identity, idempotency key or resource state. | Resolve the conflict; reuse a key only with the same request. |
+| `generation_changed` | 409 | The Activity index generation or network changed since your snapshot. | Restart the walk without `generation` and `snapshot_ledger`. |
+| `history_unavailable` | 409 | Assets: `as_of_ledger` cannot be answered from the balance history. | Start a snapshot job (`POST /snapshots`), or retry the newest ledgers later. |
+| `precondition_failed` | 412 | Webhooks: the subscription version changed. | Read it again for the current `ETag`, then decide. |
+| `response_too_large` | 413 | The result exceeds the response budget. | Lower `limit` or narrow the request. |
+| `precondition_required` | 428 | Webhooks: `If-Match` is required. | Send the subscription `ETag` as `If-Match`. |
+| `rate_limited` | 429 | A rate, concurrency or credit-cap limit, or the daily Testnet request cap, was reached. | Wait `Retry-After` seconds, with jitter. For the daily cap, `Retry-After` is the time until 00:00 UTC. |
+| `internal_error` | 500, other 5xx | Unexpected failure. | Retry with backoff; quote `request_id` when contacting support. |
+| `not_implemented` | 501 | The feature is not available on this host. | Do not retry; use another network or feature. |
+| `busy` | 503 | Reads are saturated: the request queued and was refused. | Retry the same request after `Retry-After` (usually `2`) seconds. |
+| `query_timeout` | 503 | The read ran out of time or (Activity) memory; the message says which. Repeating it unchanged will likely fail again. | Narrow the ledger range (`since_ledger`/`until_ledger`) or lower `limit`, then retry. `Retry-After` is `30`. |
+| `index_not_ready` | 503 | The index or snapshot is not ready yet, or history is rebuilding. | Retry after `Retry-After` seconds. |
+| `topic_coverage` | 503 | The range is outside the contract-event topic index coverage; the message states the covered range. | Pass a range inside the coverage, or retry after `Retry-After` (`60`). |
+| `unavailable` | 503 | Another temporary failure (billing, rate limiter, queue). On a webhook create it can instead mean that kind of endpoint is [not enabled on this network](#webhooks-not-enabled-on-a-network) (`Retry-After: 300`). | Retry after `Retry-After` seconds, a few times at most. For the webhook "not enabled" case, stop: retrying does not help. |
+| `submission_outcome_unknown` | 503 | RPC `sendTransaction` only: the answer from the node was lost. | Poll `getTransaction`; see [RPC errors](#rpc-errors). |
+
+## Daily Testnet cap
+
+Testnet is free up to 10,000 requests per organization per UTC day (unlimited on
+Enterprise). Past the cap, every Testnet request is refused until 00:00 UTC,
+and `Retry-After` counts the seconds until then. A refused request costs
+nothing and is not counted.
+
+<CodeGroup>
+```json Activity or Assets (429)
+{"error":"daily Testnet request cap of 10000 reached; resets at 00:00 UTC","code":"rate_limited","request_id":"req_…"}
+```
+
+```json RPC (429)
+{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"daily Testnet request cap of 10000 reached; resets at 00:00 UTC","data":"rate_limited","request_id":"req_…"}}
+```
+</CodeGroup>
+
+In an RPC batch, every call gets this error; a batch that would cross the cap
+is refused whole. A request of notifications only gets `429` with an empty
+body. See [Testnet is free](/guides/limits#testnet-is-free).
+
+## RPC errors
+
+RPC errors keep the JSON-RPC 2.0 envelope. `error.data` is the code from the
+table above as a plain string, and `error.request_id` equals the `X-Request-Id`
+header. The Stellar SDKs read this shape: Python `stellar-sdk` raises
+`SorobanRpcErrorResponse` with the code in `.data`, and JavaScript exposes the
+error object as `e.response.data.error`.
+
+| `error.code` | HTTP | `error.data` | Meaning |
+| --- | --- | --- | --- |
+| `-32700` | 400 | `invalid_request` | The body is not valid JSON. |
+| `-32600` | 400, 413 | `invalid_request` | Not a valid JSON-RPC 2.0 request or batch, a duplicate JSON field, or a body over 1 MiB. |
+| `-32601` | 400 | `invalid_request` | The method is not one of the [supported methods](/rpc/methods). |
+| `-32602` | 400 | `invalid_request` | Invalid params for the method (the message names the method and the problem). |
+| `-32000` | 401, 402, 403, 413, 429, 503 | `unauthorized`, `payment_required`, `forbidden`, `response_too_large`, `rate_limited`, `unavailable`, `submission_outcome_unknown` | Gateway policy or availability. |
+
+A method error from the Stellar node itself (for example a ledger outside
+retention) arrives with HTTP `200`, the node's own code and data, and no
+`request_id`. A rejected notification (no `id`) gets the real HTTP status with
+an empty body.
+
+`submission_outcome_unknown` means the transaction reached the node but its
+answer was lost, so it may or may not be pending. The error carries
+`transaction_hash` next to `request_id`:
+
+```json
+{"jsonrpc":"2.0","id":"send-1","error":{"code":-32000,"message":"sendTransaction outcome unknown: …","data":"submission_outcome_unknown","request_id":"req_0123456789abcdef01234567","transaction_hash":"6af8…2ac0"}}
+```
+
+Poll `getTransaction` with `error.transaction_hash` until it is found or the
+transaction's time bounds expire. Resubmitting the same signed envelope is safe
+(the node answers `DUPLICATE`); do not build a new transaction with a new
+sequence number first.
+
+## Webhooks not enabled on a network
+
+`POST /v1/subscriptions` can answer `503 unavailable` with `Retry-After: 300`
+and one of these messages:
+
+- `paid webhooks are not enabled on this network yet`
+- `free Testnet webhooks are not enabled`
+- `webhook admission is not initialized on this network yet`
+
+This is a network configuration state, not a passing failure. Retrying does not
+help until Lumeus changes the network configuration: stop after one or two
+attempts, create the endpoint on the other network, or contact
+[hello@lumeus.dev](mailto:hello@lumeus.dev).
+
+## Unknown routes
+
+An unknown path returns `404 not_found`, and a known path with the wrong method
+returns `405 method_not_allowed` with an `Allow` header, on every host. RPC
+answers these with the REST error body, not a JSON-RPC envelope; any `POST /`
+reaches the JSON-RPC handler.
+
+A path with an empty, `.` or `..` segment returns `400 invalid_request`. This
+usually means a shell variable was empty, as in `/accounts//activity` when
+`$ACCOUNT` is not set:
+
+```json
+{"error":"invalid path /accounts//activity: empty, '.' or '..' path segment","code":"invalid_request","request_id":"req_…"}
+```
+
+A trailing slash is a different route and returns `404 not_found`.
+
+## Wrong key type
+
+A `401` names the key you sent when it is the wrong kind:
+
+| You sent | To | Message |
+| --- | --- | --- |
+| `whk_…` (webhook key) | Activity or Assets | this is a Webhooks management key (whk_); this API takes a lum_ API key |
+| `whsec_…` (signing secret) | Activity or Assets | this is a webhook signing secret (whsec_), not an API key; this API takes a lum_ API key |
+| Anything else that is not a key | Activity or Assets | invalid API key; this API takes a lum_ API key |
+| `lum_…` key | Webhooks | invalid session. Webhooks takes a `whk_` key from **Webhooks > Webhook keys** |
+
+A `lum_test_` key on a Mainnet host, or `lum_live_` on Testnet, also returns
+`401`. See [networks](/guides/authentication#networks).
+
+## Retry policy
+
+- Retry only `429`, `500`, `502`, `503` and `504`, after `Retry-After` when it
+  is present. Never retry `501 not_implemented`: the feature is off on that host.
+- Cap the attempts (for example 5) and the total time, and add random jitter.
+- Do not retry `query_timeout` unchanged: narrow the request first.
+- Do not retry a webhook create that says the endpoint kind is
+  [not enabled on this network](#webhooks-not-enabled-on-a-network)
+  (`Retry-After: 300`).
+- Do not retry `400`, `401`, `403` or `404` unchanged.
+- Never retry `sendTransaction` with a newly built transaction; see
+  `submission_outcome_unknown` above.
+
+```javascript
+async function getWithRetry(url, key, attempts = 5) {
+  for (let i = 1; ; i++) {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${key}` } });
+    if (res.ok) return res.json();
+    const body = await res.json().catch(() => ({}));
+    const retryable = [429, 500, 502, 503, 504].includes(res.status) && body.code !== "query_timeout";
+    if (!retryable || i === attempts) {
+      // A proxy can answer 502/504 with HTML, so fall back to the status text.
+      const id = body.request_id ?? res.headers.get("x-request-id") ?? "no request_id";
+      throw new Error(`${res.status} ${body.code ?? res.statusText}: ${body.error ?? "no JSON body"} (${id})`);
+    }
+    const wait = Number(res.headers.get("retry-after") ?? 2 ** i);
+    if (wait > 60) {
+      // A long wait is the daily Testnet cap (or a webhook "not enabled" 503): stop instead of sleeping.
+      throw new Error(`${res.status} ${body.code} ${body.error}; retry after ${wait}s (${body.request_id})`);
+    }
+    await new Promise((r) => setTimeout(r, wait * 1000 + Math.random() * 500));
+  }
+}
+```
+
+## ETags and preconditions
+
+Only Webhooks uses `ETag` and `If-Match`. Read a subscription and save its
+`ETag`, for example `"3"` (behind compression it may arrive as `W/"3"`; send it
+back as is). Send it as `If-Match` on PATCH, DELETE, signing-key rotation and
+revocation, tests, replay quotes and replays. A missing `If-Match` returns
+`428`; a version that no longer matches returns `412`: read the subscription
+again and decide whether your change still applies. See
+[manage subscriptions](/webhooks/lifecycle).
+
+## Report an issue
+
+Send the product, network, UTC time, HTTP status, `request_id`, and a redacted
+request shape to [hello@lumeus.dev](mailto:hello@lumeus.dev). Never include API
+keys, bearer tokens, signing secrets, seeds or raw authorization headers.

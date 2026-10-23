@@ -1,0 +1,141 @@
+---
+title: Wallet portfolio
+description: List every asset a wallet holds, with balances and what it can spend.
+---
+
+Build a wallet's portfolio view from one Assets API request. Holdings returns
+XLM, every trustline, liquidity pool shares and recognized contract tokens, each
+with its balance, spendable amount and token metadata.
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+<TestnetSetup />
+
+This recipe uses a Testnet wallet that holds several assets:
+
+```bash
+export WALLET='GADH5BQZDLFX5WY5HL5X2C3WVH2HWTMC6IIP22VRFGUQZMVQSBFYD4VK'
+```
+
+## Fetch the portfolio
+
+<CodeGroup>
+
+```bash curl
+curl --fail-with-body -G "$ASSETS_URL/accounts/$WALLET/holdings" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode 'limit=200' \
+  | jq -r '._embedded.records[]
+      | [.symbol // .code, .balance, .spendable, .asset,
+         (.flags | map(select(. == "impersonation_risk" or . == "likely_spam")) | join(","))] | @tsv'
+```
+
+```javascript JavaScript
+// Node 18+: save as portfolio.mjs and run `node portfolio.mjs`
+const { ASSETS_URL, WALLET, LUMEUS_API_KEY } = process.env;
+const headers = { Authorization: `Bearer ${LUMEUS_API_KEY}` };
+
+const holdings = [];
+let url = new URL(`/accounts/${WALLET}/holdings?limit=200`, ASSETS_URL);
+while (url) {
+  const response = await fetch(url, { headers });
+  const page = await response.json();
+  if (!response.ok) throw new Error(`${response.status} ${page.code}: ${page.error}`);
+  holdings.push(...page._embedded.records);
+  url = page._links.next ? new URL(page._links.next.href, ASSETS_URL) : null;
+}
+
+// Never show a flagged token as if it were the real one.
+const RISKY = ['impersonation_risk', 'likely_spam'];
+for (const h of holdings) {
+  const warning = h.flags.some((f) => RISKY.includes(f)) ? `  warning: ${h.flags.join(',')}` : '';
+  console.log((h.symbol ?? h.code ?? h.asset).padEnd(8), h.balance.padStart(20), h.spendable ?? '', warning);
+}
+```
+
+```python Python
+# pip install requests; save as portfolio.py and run `python portfolio.py`
+import os
+
+import requests
+
+base = os.environ["ASSETS_URL"]
+headers = {"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"}
+
+holdings = []
+url = f"{base}/accounts/{os.environ['WALLET']}/holdings?limit=200"
+while url:
+    response = requests.get(url, headers=headers, timeout=60)
+    page = response.json()
+    if not response.ok:
+        raise SystemExit(f"{response.status_code} {page['code']}: {page['error']}")
+    holdings += page["_embedded"]["records"]
+    url = base + page["_links"]["next"]["href"] if "next" in page["_links"] else None
+
+# Never show a flagged token as if it were the real one.
+RISKY = {"impersonation_risk", "likely_spam"}
+for h in holdings:
+    warning = f"  warning: {','.join(h['flags'])}" if RISKY & set(h["flags"]) else ""
+    print(f"{h.get('symbol') or h.get('code') or h['asset']:<8} {h['balance']:>20} {h.get('spendable') or ''}{warning}")
+```
+
+</CodeGroup>
+
+Output for the sample wallet (8 holdings, trimmed):
+
+```text
+BTC                 1.9800000 1.9800000
+ETH                 0.9900000 0.9900000
+...
+USDC                4.9499000 4.9499000
+USDT                2.9700000 2.9700000
+XLM              9431.1207026 9426.6207026
+```
+
+One holding record, trimmed:
+
+```json
+{
+  "asset": "native",
+  "kind": "native",
+  "code": "XLM",
+  "symbol": "XLM",
+  "decimals": 7,
+  "balance": "9431.1207026",
+  "balance_raw": "94311207026",
+  "spendable": "9426.6207026",
+  "source": "ledger_entry",
+  "verified": true,
+  "last_modified_ledger": 5136449
+}
+```
+
+## Read the result
+
+| Field | Use it for |
+| --- | --- |
+| `balance` | The total held, as a decimal string. `balance_raw` is the integer in the smallest unit |
+| `spendable` | What the wallet can send now. XLM: the balance minus the minimum balance and selling liabilities. Trustlines: the balance minus selling liabilities, or `0` when the trustline is not authorized. `null` for pool shares and contract tokens |
+| `symbol`, `code`, `name`, `decimals` | Display metadata from the token registry |
+| `verified` | `true` when read from a ledger entry or recognized token storage |
+| `flags` | Registry warnings. Hide or clearly mark tokens flagged `impersonation_risk` (copies the code or name of a known token) or `likely_spam`, as the code above does |
+| `completeness.complete` (top level) | `true` when every holding was read exactly. Pass `include=unverified` to also list custom tokens with an unrecognized storage layout; their balances come from simulating the token's `balance()` call (`source: simulation`, `verified: false`) |
+| `account` (top level) | XLM reserve details: `minimum_balance`, `subentries`, sponsorships. `null` for an address that does not exist yet (never funded), which then has no holdings |
+
+Add `kind=trustline` (or `native`, `pool_share`, `contract`) to show one kind,
+or `min_balance=0.01` to hide dust. Several classic assets can share a code such
+as `USDC`; show the issuer or the token's home domain next to the code so users
+can tell them apart.
+
+## Credits
+
+On Mainnet, holdings cost 1 credit per started 100 records, so a wallet with up
+to 100 holdings costs 1 credit (plus 1 per token simulated with
+`include=unverified`). On Testnet the request is free and counts toward the
+daily Testnet cap of 10,000. See [Limits and credits](/guides/limits).
+
+## Next
+
+- [Holdings](/assets-api/holdings): every filter and field.
+- [Last payments of an account](/recipes/last-payments): recent movements for the same wallet.
+- [Alert on balance changes](/recipes/balance-alerts): keep the view current with webhooks.

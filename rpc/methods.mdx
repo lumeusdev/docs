@@ -1,0 +1,225 @@
+---
+title: Methods
+description: The 12 supported methods, their parameters, limits and credits.
+---
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+Lumeus RPC supports the 12 Stellar RPC methods below, all through `POST /`.
+Results match [Stellar RPC](https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods);
+this page lists what Lumeus adds: required parameters, limits and credits.
+
+## Supported methods
+
+| Method | What it does | Required params | Credits | Limits |
+| --- | --- | --- | --- | --- |
+| [`getHealth`](/api/rpc/getHealth) | Node status, latest and oldest retained ledger | none | 1 | |
+| [`getNetwork`](/api/rpc/getNetwork) | Network passphrase and protocol version | none | 1 | |
+| [`getVersionInfo`](/api/rpc/getVersionInfo) | Node and Core versions | none | 1 | |
+| [`getFeeStats`](/api/rpc/getFeeStats) | Recent inclusion fee percentiles | none | 1 | |
+| [`getLatestLedger`](/api/rpc/getLatestLedger) | Latest ledger with header and close metadata XDR | none | 1 | Result can be several MB; use `getHealth` for the tip |
+| [`getTransaction`](/api/rpc/getTransaction) | One transaction's outcome by hash | `hash` (64 hex) | 1 | Retained window only |
+| [`getTransactions`](/api/rpc/getTransactions) | Transactions in ledger order | `startLedger` or `pagination.cursor` | 2 | Default 50, max 200 |
+| [`getLedgers`](/api/rpc/getLedgers) | Ledgers with metadata | `startLedger` or `pagination.cursor` | 2 | Testnet: default 50, max 200. Mainnet: default 10, max 20; with `xdrFormat: "json"` default and max 5 |
+| [`getEvents`](/api/rpc/getEvents) | Contract and system events, filtered | `startLedger` or `pagination.cursor` | 2 | Default 100, max 10,000. Filter limits below |
+| [`getLedgerEntries`](/api/rpc/getLedgerEntries) | Current ledger entries | `keys`: base64 LedgerKey XDR | 2 | 1 to 200 keys, each at most 16 KiB |
+| [`simulateTransaction`](/api/rpc/simulateTransaction) | Run a transaction without submitting it | `transaction`: envelope XDR | 5 | Envelope at most 350,000 characters |
+| [`sendTransaction`](/api/rpc/sendTransaction) | Submit a signed transaction | `transaction`: signed envelope XDR | 2 | Envelope at most 350,000 characters |
+
+Mainnet `getLedgers` pages are small because one Mainnet ledger with metadata is
+about 1 to 2.3 MB.
+
+## Parameters
+
+- Send `params` as a named JSON object, or leave it out. Positional arrays get
+  `400` with code `-32602`.
+- A parameter set to `null` is treated as not sent, so SDKs that send
+  `null` for unset options work.
+- Unknown methods get `-32601`, and unknown parameters get `-32602`.
+- `getLedgerEntries.keys` takes base64 LedgerKey XDR, not an address. Build
+  keys with your SDK, as in [build a LedgerKey](#build-a-ledgerkey).
+- `xdrFormat` is `"base64"` (default) or `"json"`, on the methods that support it.
+
+## Build a LedgerKey
+
+`getLedgerEntries` reads current entries by key. These examples build the key
+of an account and of a contract's instance, then read both:
+
+<TestnetSetup />
+
+<CodeGroup>
+
+```js keys.mjs
+// npm install @stellar/stellar-sdk; save as keys.mjs and run `node keys.mjs`
+import { Address, Keypair, rpc, xdr } from '@stellar/stellar-sdk';
+
+const { RPC_URL, ACCOUNT, CONTRACT, LUMEUS_API_KEY } = process.env;
+const server = new rpc.Server(RPC_URL, { headers: { Authorization: `Bearer ${LUMEUS_API_KEY}` } });
+
+// The account entry of a G... address.
+const accountKey = xdr.LedgerKey.account(
+  new xdr.LedgerKeyAccount({ accountId: Keypair.fromPublicKey(ACCOUNT).xdrPublicKey() }),
+);
+// The instance entry of a C... contract (its code hash and instance storage).
+const instanceKey = xdr.LedgerKey.contractData(
+  new xdr.LedgerKeyContractData({
+    contract: new Address(CONTRACT).toScAddress(),
+    key: xdr.ScVal.scvLedgerKeyContractInstance(),
+    durability: xdr.ContractDataDurability.persistent,
+  }),
+);
+
+const { entries, latestLedger } = await server.getLedgerEntries(accountKey, instanceKey);
+console.log(`${entries.length} entries at ledger ${latestLedger}`);
+for (const e of entries) {
+  console.log('last modified', e.lastModifiedLedgerSeq, 'live until', e.liveUntilLedgerSeq ?? 'n/a');
+}
+// The base64 key is what a raw JSON-RPC call sends in params.keys.
+console.log(accountKey.toXDR('base64'));
+```
+
+```python keys.py
+# pip install stellar-sdk; save as keys.py and run `python keys.py`
+import os
+
+from stellar_sdk import Address, Keypair, SorobanServer, xdr
+from stellar_sdk.client.requests_client import RequestsClient
+
+# num_retries=0: raise 429/503 at once instead of sleeping through Retry-After.
+server = SorobanServer(
+    os.environ["RPC_URL"],
+    client=RequestsClient(num_retries=0, custom_headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"}),
+)
+
+# The account entry of a G... address.
+account_key = xdr.LedgerKey(
+    type=xdr.LedgerEntryType.ACCOUNT,
+    account=xdr.LedgerKeyAccount(account_id=Keypair.from_public_key(os.environ["ACCOUNT"]).xdr_account_id()),
+)
+# The instance entry of a C... contract (its code hash and instance storage).
+instance_key = xdr.LedgerKey(
+    type=xdr.LedgerEntryType.CONTRACT_DATA,
+    contract_data=xdr.LedgerKeyContractData(
+        contract=Address(os.environ["CONTRACT"]).to_xdr_sc_address(),
+        key=xdr.SCVal(xdr.SCValType.SCV_LEDGER_KEY_CONTRACT_INSTANCE),
+        durability=xdr.ContractDataDurability.PERSISTENT,
+    ),
+)
+
+response = server.get_ledger_entries([account_key, instance_key])
+print(f"{len(response.entries)} entries at ledger {response.latest_ledger}")
+for e in response.entries:
+    print("last modified", e.last_modified_ledger, "live until", e.live_until_ledger or "n/a")
+# The base64 key is what a raw JSON-RPC call sends in params.keys.
+print(account_key.to_xdr())
+```
+
+```bash curl
+# The account key of $ACCOUNT, as printed by the SDK examples.
+curl -sS --fail-with-body "$RPC_URL/" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" -H 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"getLedgerEntries","params":{"keys":["AAAAAAAAAAAQfdFrLDgzSIIugR73qs8U0ZiKbwBUclTTPh5thlbgnA=="]}}' \
+  | jq -c '.result.entries[] | {lastModifiedLedgerSeq}'
+```
+
+</CodeGroup>
+
+```text
+2 entries at ledger 5332512
+last modified 5332510 live until n/a
+last modified 4609662 live until 8305943
+AAAAAAAAAAAQfdFrLDgzSIIugR73qs8U0ZiKbwBUclTTPh5thlbgnA==
+```
+
+For a contract's storage entry, put the storage key's `ScVal` in `key` and pick
+`persistent` or `temporary` durability. JavaScript's `server.getAccount` and
+`server.getContractData` build common keys for you.
+
+## Pagination
+
+`getEvents`, `getTransactions` and `getLedgers` page the same way:
+
+1. First page: send `startLedger`. It must be inside the retained window
+   (`getHealth` returns `oldestLedger`).
+2. Next pages: send `pagination.cursor` from the previous result, and no
+   `startLedger`. For `getEvents`, repeat the same `filters`.
+3. `pagination.limit` sets the page size, within the limits above.
+
+
+```bash
+# Start 1,000 ledgers (about 1.5 hours) before the tip.
+START=$(curl -sS --fail-with-body "$RPC_URL/" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" -H 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' | jq '.result.latestLedger - 1000')
+
+# First page: startLedger plus filters.
+PAGE=$(curl -sS --fail-with-body "$RPC_URL/" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" -H 'Content-Type: application/json' \
+  --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getEvents\",\"params\":{\"startLedger\":$START,\"filters\":[{\"type\":\"contract\",\"contractIds\":[\"$CONTRACT\"]}],\"pagination\":{\"limit\":2}}}")
+CURSOR=$(echo "$PAGE" | jq -r .result.cursor)
+
+# Next page: the cursor plus the same filters, without startLedger.
+curl -sS --fail-with-body "$RPC_URL/" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" -H 'Content-Type: application/json' \
+  --data "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"getEvents\",\"params\":{\"filters\":[{\"type\":\"contract\",\"contractIds\":[\"$CONTRACT\"]}],\"pagination\":{\"cursor\":\"$CURSOR\",\"limit\":2}}}" \
+  | jq '{events: [.result.events[] | {ledger, id}], cursor: .result.cursor}'
+```
+
+```json Response
+{
+  "events": [
+    { "ledger": 5330508, "id": "0022894357531066368-0000000002" },
+    { "ledger": 5330508, "id": "0022894357531066368-0000000003" }
+  ],
+  "cursor": "0022894357531066368-0000000003"
+}
+```
+
+A `startLedger` outside the retained window returns HTTP `200` with a node error
+(`-32600`). The wording differs by method, for example `getEvents` answers
+"startLedger must be within the ledger range: 5244415 - 5332491", so do not
+match on it. For older history, use the [Activity API](/activity/overview).
+
+### `getEvents` filter limits
+
+| Rule | Limit |
+| --- | --- |
+| Filters per request | at most 5 |
+| `type` | `contract` or `system`, or left out |
+| `contractIds` per filter | at most 5 |
+| Topic filters per filter | at most 5 |
+| Segments per topic filter | 1 to 4, plus an optional trailing `"**"` that matches any further segments |
+| Size of one segment | at most 16 KiB |
+
+`"**"` is allowed only as the last segment. Breaking a rule returns `400` with
+`-32602`.
+
+## Credits
+
+Testnet calls are free: they cost 0 credits, and each call (each batch child)
+counts toward your daily Testnet cap of 10,000 requests. On Mainnet, a call
+costs its method credits from the table above plus one credit per started
+64 KiB of response. For example:
+
+- A `getHealth` call (under 1 KiB) costs 1 + 1 = 2 credits.
+- A 200 KiB `getLedgers` page costs 2 + 4 = 6 credits.
+- A batch costs the sum of its children's method credits plus one credit per
+  started 64 KiB of the whole batch response.
+
+Gateway errors (`4xx` and `5xx`) are not charged. A simulation that returns
+`result.error` did run and costs its 5 credits. The live table is
+`rpc_method_credits` in `GET https://api.lumeus.dev/v1/plans`, and Mainnet
+credits come from your workspace's monthly balance; see [billing](/guides/billing).
+
+## Size and time limits
+
+| Limit | Value | When exceeded |
+| --- | --- | --- |
+| Request body | 1 MiB | `413`, `-32600` |
+| Response, including a whole batch | 64 MiB | `413`, `response_too_large`: lower `pagination.limit` or ask for fewer keys |
+| Deadline for reads | 10 seconds | `503`, `unavailable`, with `Retry-After` |
+| Deadline for `simulateTransaction` and `sendTransaction` | 30 seconds | `503`; for a send, see [if the send times out](/rpc/transactions#if-the-send-times-out) |
+| Batch | 1 to 20 requests, sharing the longest child deadline | `400`, `-32600` |
+
+See [RPC errors](/guides/errors#rpc-errors) for every code and
+[rate limits](/guides/rate-limits) for requests per minute.

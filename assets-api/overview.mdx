@@ -1,0 +1,171 @@
+---
+title: Assets API
+sidebarTitle: Overview
+description: Balances per address, ranked token holders and a token registry, read from Stellar ledger state.
+---
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+The Assets API answers "what does this address hold?" and "who holds this
+token?". Answers come from an index of Stellar ledger state, not from summed
+events, so every balance is the exact state after one ledger. Use it for wallet
+portfolios, holder lists, token pages and balance checks before a payment.
+
+<TestnetSetup />
+
+<CodeGroup>
+
+```bash curl
+curl --fail-with-body "$ASSETS_URL/accounts/$ACCOUNT/holdings" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY"
+```
+
+```js JavaScript
+const res = await fetch(
+  `${process.env.ASSETS_URL}/accounts/${process.env.ACCOUNT}/holdings`,
+  { headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` } },
+);
+if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+const page = await res.json();
+for (const r of page._embedded.records) console.log(r.asset, r.balance);
+```
+
+```python Python
+import os, requests
+
+res = requests.get(
+    f"{os.environ['ASSETS_URL']}/accounts/{os.environ['ACCOUNT']}/holdings",
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    timeout=30,
+)
+res.raise_for_status()
+for r in res.json()["_embedded"]["records"]:
+    print(r["asset"], r["balance"])
+```
+
+</CodeGroup>
+
+Trimmed live response (Testnet):
+
+```json
+{
+  "_embedded": {
+    "records": [
+      {
+        "asset": "native", "kind": "native", "code": "XLM",
+        "balance": "7063547982.5299856", "balance_raw": "70635479825299856",
+        "spendable": "7063547981.5299856",
+        "source": "ledger_entry", "verified": true, "archived": false
+      }
+    ]
+  },
+  "account": {
+    "id": "GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR",
+    "balance": "7063547982.5299856", "spendable": "7063547981.5299856",
+    "minimum_balance": "1.0000000", "subentries": 0
+  },
+  "completeness": {
+    "complete": true, "verified": 1, "unverified": 0, "unverified_contracts": [],
+    "note": "every holding is read from protocol ledger entries or recognized SEP-41 storage"
+  },
+  "read_view": {
+    "network": "testnet", "generation": "assets-testnet-v1-5253887",
+    "as_of_ledger": 5331463, "as_of_closed_at": "2026-10-22T14:55:02Z",
+    "bootstrap_ledger": 5253887
+  }
+}
+```
+
+Two blocks tell you how far to trust an answer:
+
+- **`read_view`** says which ledger the answer describes: you are reading the
+  state after `as_of_ledger`.
+- **`completeness`** (holdings only) says whether every balance is verified and
+  lists token contracts that were left out. See [accuracy](/assets-api/accuracy).
+
+## Networks
+
+| Network | Base URL | Key | Serves |
+| --- | --- | --- | --- |
+| Testnet | `https://assets-testnet.lumeus.dev` | `lum_test_...` | Current state, `as_of_ledger` reads and snapshot jobs |
+| Mainnet | `https://assets.lumeus.dev` | `lum_live_...` | Current state; `as_of_ledger` and snapshot jobs answer `501` |
+
+Use the same network-scoped key as Activity and RPC. Testnet requests are free:
+they cost 0 credits and count toward your organization's daily Testnet cap of
+10,000 requests (resets 00:00 UTC). Mainnet requests cost the credits below.
+[Readiness](/guides/readiness) shows how current each index is.
+
+## Endpoints and credits
+
+Credits apply on Mainnet; on Testnet every route below costs 0.
+
+| Route | Returns | Credits |
+| --- | --- | --- |
+| `GET /accounts/{address}/holdings` | Every balance of an address ([holdings](/assets-api/holdings)) | 1 per 100 rows |
+| `GET /accounts/{address}/claimable-balances` | Claimable balances ([account state](/assets-api/account-state)) | 1 per 100 rows |
+| `GET /accounts/{address}/offers` | Open DEX offers | 1 per 100 rows |
+| `GET /accounts/{address}/allowances` | Token allowances | 1 per 100 rows |
+| `GET /assets` | Registry search ([registry](/assets-api/registry)) | 1 per 100 rows |
+| `GET /assets/{asset}` | One registry record | 1 |
+| `GET /assets/{asset}/holders` | Ranked holders ([holders](/assets-api/holders)) | 5 per 100 rows |
+| `GET /assets/{asset}/holders/{address}` | One holder and its rank | 2 |
+| Holdings or holders with `as_of_ledger` | State at a past ledger ([snapshots](/assets-api/snapshots)) | 5 per 100 rows |
+| `POST /snapshots` | A job for any past ledger | 50 per completed job |
+
+Example: on Mainnet a holders page of 100 records costs 5 credits, and a full
+page of 200 costs 10. The full formula is in [limits and credits](/guides/limits#assets-api).
+
+## Identifiers
+
+- **Asset IDs:** `native` for XLM, `CODE:ISSUER` for classic assets (the same
+  string Activity uses; case-sensitive, never padded), a `C...` contract ID for
+  a custom SEP-41 token, and `pool:<64 hex>` for a liquidity pool share. A
+  Stellar Asset Contract (SAC) ID is accepted as an alias of its classic asset.
+- **Holders:** `G...` accounts or `C...` contracts. An `M...` (muxed) address
+  resolves to its `G...` account and the response echoes `muxed_input`.
+- **Amounts:** `balance` is a decimal string and `balance_raw` an exact integer
+  string. Never parse them as floating-point numbers; use `BigInt` or `Decimal`.
+
+<Accordion title="Terms used on these pages">
+
+| Term | Meaning |
+| --- | --- |
+| Trustline | An account's opt-in to hold a classic asset; it stores the balance |
+| SAC | Stellar Asset Contract: the built-in contract that exposes a classic asset to smart contracts |
+| SEP-41 | The standard interface of custom contract tokens |
+| Hot archive | Where expired contract storage moves. The owner still holds it, and it is restored on next use |
+| Generation | One build of the index. It changes after a rebuild or a Testnet reset |
+
+</Accordion>
+
+## Read view
+
+| Field | Meaning |
+| --- | --- |
+| `as_of_ledger` | The answer is the post-state of this ledger |
+| `as_of_closed_at` | Close time of that ledger; `null` for `as_of_ledger` reads |
+| `generation` | Index generation; restart a paging walk when it changes |
+| `bootstrap_ledger` | First ledger of balance history on this network |
+| `network` | `testnet` or `pubnet` |
+
+`as_of_ledger` means the same as Activity `read_view.snapshot_ledger`. To follow
+changes without gaps, read holdings at ledger N, then Activity from
+`since_ledger=N+1`.
+
+## Requests and errors
+
+- Unknown or repeated query parameters return `400 invalid_request`.
+- Pages use `_embedded.records` and `_links.next.href` with an opaque `cursor`.
+  `limit` defaults to 50; larger values are lowered to 200.
+- Errors are `{"error", "code", "request_id"}`, with `code` from the shared
+  [error codes](/guides/errors#error-codes). Every `503` carries `Retry-After`.
+
+```json
+{"code": "not_found", "error": "this address does not hold the asset", "request_id": "req_f6285a99545d6a90a03aaaa3"}
+```
+
+## Next
+
+- [Holdings](/assets-api/holdings): fields, null rules and the account block.
+- [Token holders](/assets-api/holders): ranked lists and one holder's rank.
+- [Rate limits](/guides/rate-limits) and [errors](/guides/errors).

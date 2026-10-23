@@ -1,0 +1,218 @@
+---
+title: Events
+description: Event fields, IDs, amount precision and supported operations.
+---
+
+Every Activity record is one event: a token movement (`token_transfer`) or a
+Soroban contract event (`contract_event`). This page lists the fields, shows a
+real record of each kind and explains IDs, amounts and coverage.
+
+Activity and [webhooks](/webhooks/overview) share the same event body. Activity
+adds `paging_token` to every record and `rpc_event_id` to contract events;
+webhook bodies have neither.
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+<TestnetSetup />
+
+## Fetch the events of a transaction
+
+<CodeGroup>
+
+```bash curl
+curl --fail-with-body "$ACTIVITY_URL/transactions/$TX_HASH/activity" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY"
+```
+
+```javascript JavaScript
+const url = new URL(`/transactions/${process.env.TX_HASH}/activity`, process.env.ACTIVITY_URL);
+const response = await fetch(url, {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+const page = await response.json();
+if (!response.ok) throw new Error(`${page.code}: ${page.error}`);
+for (const event of page._embedded.records) console.log(event.kind, event.type, event.amount);
+```
+
+```python Python
+import os
+import requests
+
+response = requests.get(
+    f"{os.environ['ACTIVITY_URL']}/transactions/{os.environ['TX_HASH']}/activity",
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    timeout=60,
+)
+response.raise_for_status()
+for event in response.json()["_embedded"]["records"]:
+    print(event["kind"], event["type"], event.get("amount"))
+```
+
+</CodeGroup>
+
+The transaction has a `fee` event and a `transfer` event. The fee record:
+
+```json
+{
+  "id": "testnet:5331421:3",
+  "kind": "token_transfer",
+  "type": "fee",
+  "network": "testnet",
+  "ledger": 5331421,
+  "closed_at": "2026-10-22T14:51:32Z",
+  "tx_hash": "1ae3b48681d8b27f31ee8f1893281e9a56fd7c45cf9909cf6a0599949079c2ce",
+  "tx_index": 4,
+  "asset": "native",
+  "contract_address": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+  "from": "GCCVKXCSUTLL6R3CATYGKTAQIPHN6XNMBZ4E75NXAQ6VN3AJ6Z6MKE6F",
+  "amount": "0.0000100",
+  "amount_raw": "100",
+  "paging_token": "0022898278836224000-0000000000"
+}
+```
+
+A `contract_event` record, from `GET /accounts/$ACCOUNT/contract-events`:
+
+```json
+{
+  "id": "testnet:2650391:ce:9:0:0",
+  "kind": "contract_event",
+  "type": "approve",
+  "network": "testnet",
+  "ledger": 2650391,
+  "closed_at": "2026-05-20T07:17:29Z",
+  "tx_hash": "8c7f3bc80381cf504285ee4fc17a4ab20fb94c8f8f6ed3688124e3e82ec021c0",
+  "tx_index": 9,
+  "operation_index": 1,
+  "contract_address": "CCUX7JEJBAUCTFWXY5LQ4FOVIXF2ZWBTPXXZQN5CTGMJ7A2LUHYU22MY",
+  "topics": [
+    "approve",
+    "CAT6HNJZ6ODHXRA77FKDVPAG3RX4B6I362SU4K4DDCRN6J7TDY75OZSI",
+    "GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR"
+  ],
+  "data": ["50000000", 2667669],
+  "topics_xdr": [
+    "AAAADwAAAAdhcHByb3ZlAA==",
+    "AAAAEgAAAAEn47U584Z7xB/5VDq8BtxvwPkb9qVOK4MYot8n8x4/1w==",
+    "AAAAEgAAAAAAAAAAEH3Rayw4M0iCLoEe96rPFNGYim8AVHJU0z4ebYZW4Jw="
+  ],
+  "data_xdr": "AAAAEAAAAAEAAAACAAAACgAAAAAAAAAAAAAAAAL68IAAAAADACi0lQ==",
+  "paging_token": "0011383342666649601-0000000000",
+  "rpc_event_id": "0011383342666649600-0000000000"
+}
+```
+
+## Fields
+
+| Field | Kinds | Present | Meaning |
+| --- | --- | --- | --- |
+| `id` | both | always | Unique event ID within `network`. See [event IDs](#event-ids). |
+| `kind` | both | always | `token_transfer` or `contract_event`. |
+| `type` | both | always | `transfer`, `mint`, `burn`, `clawback` or `fee` for token transfers; the event name (first topic) for contract events. |
+| `network` | both | always | `testnet` or `pubnet`. |
+| `ledger`, `closed_at` | both | always | Ledger sequence and its close time (UTC). |
+| `tx_hash`, `tx_index` | both | always | Transaction hash and its one-based position in the ledger. |
+| `operation_index` | both | not on fee events | One-based operation position. |
+| `contract_address` | both | when known | The token contract (`token_transfer`) or emitting contract (`contract_event`). |
+| `asset` | token | Classic assets and SACs | `native` or `CODE:ISSUER`. Absent for custom contract tokens. |
+| `from`, `to` | token | per type | Sender and recipient. A `mint` has no `from`; `burn`, `clawback` and `fee` have no `to`. |
+| `issuer` | token | issuer actions | The issuer, on mint, burn and clawback of an issued asset. |
+| `amount`, `amount_raw` | token | always | Decimal string and exact integer string. See [amounts](#amounts). |
+| `to_muxed_id`, `to_muxed_address`, `to_muxed_text`, `to_muxed_hash` | token | muxed recipients | Muxed destination details. IDs are strings. |
+| `memo_type`, `memo`, `memo_xdr` | both | when the transaction has a memo | The transaction memo, repeated for routing. |
+| `topics`, `data` | contract | always | Decoded topics and data as JSON. |
+| `topics_xdr`, `data_xdr` | contract | always | The exact ScVal XDR (base64). |
+| `paging_token` | both | Activity only | Cursor of this record. |
+| `rpc_event_id` | contract | Activity only | The Stellar RPC `getEvents` ID of the same event. |
+
+A custom contract event named `transfer` is not a verified token movement; check
+`kind`. [Token classification](/activity/tokens) lists the shapes that become
+`token_transfer`.
+
+## Event IDs
+
+Treat `id` as an opaque string and deduplicate on `(network, id)`. Its
+segments are separated by colons:
+
+| Kind | Format | Segments |
+| --- | --- | --- |
+| `token_transfer` | `{network}:{ledger}:{n}` | `n` is the zero-based position of the event among all token-transfer events of that ledger |
+| `contract_event` | `{network}:{ledger}:ce:{tx}:{op}:{event}` | `tx` is one-based; `op` is zero-based; `event` is the zero-based position in that operation's event list |
+
+`op` in a contract event ID is zero-based while the `operation_index` field is
+one-based, so `operation_index` equals `op + 1`. The `event` segment can skip
+numbers, because events that became `token_transfer` records keep their
+positions.
+
+Activity and [webhooks](/webhooks/overview) use the same decoder, so the same
+on-chain event has the same `id` in both, for the same decoder release (a
+decoder change that renumbers events would be announced). When you store both:
+
+- Key on `(network, id)`. Do not include `generation`: it is product-specific
+  (the Activity index generation and the webhook chain generation differ).
+- Ignore the Activity-only `paging_token` and `rpc_event_id` when you compare
+  bodies. `balance.changed` and `webhook.test` exist only in webhooks.
+- Ledger numbers and IDs repeat after a Testnet reset: start a new store, or
+  add the reset date to the key.
+
+## Paging tokens and RPC event IDs
+
+`paging_token` has the form `{toid}-{index}`: a 19-digit TOID and a 10-digit
+index. The TOID packs the ledger, the one-based transaction index and the
+one-based operation index (`0` for fee events). The index is the zero-based
+position among the decoded events of that operation, with token-transfer events
+numbered before contract events. Use it only as a cursor.
+
+`rpc_event_id` uses the same layout, but both parts can differ: RPC counts
+operations from 0, and its index is the event's position in the operation's
+full event list (the `event` segment of `id`). For example, event
+`testnet:5330800:ce:8:0:2` has `paging_token` `0022895611661549569-0000000004`
+and `rpc_event_id` `0022895611661549568-0000000002`. Always join with RPC on
+`rpc_event_id`; never derive it from `paging_token`.
+
+## Amounts
+
+`amount_raw` is the exact integer. `amount` is a decimal rendering; Classic
+assets and Stellar Asset Contracts use seven decimal places. Keep raw values and
+use integer or decimal libraries; do not reconcile balances with `Number` or
+floating-point columns.
+
+For a custom contract token, `asset` is absent (not `null`) and
+`contract_address` identifies the token. Its `amount` equals `amount_raw`:
+Lumeus does not know the contract's decimals and applies no scaling. A token's
+symbol is not globally unique.
+
+A Soroban transaction can have a second `fee` event with a negative amount: the
+refund. Sum the fee events of a transaction to get the final fee.
+
+## Participants and memos
+
+`from` and `to` are the decoded movement roles. `issuer` marks an issuer action;
+the issuer is not a participant in holder-to-holder transfers.
+
+Muxed destinations can include `to_muxed_id`, `to_muxed_address`,
+`to_muxed_text` or `to_muxed_hash`. The transaction memo fields are repeated on
+each event so you can route deposits without a second request. Validate the
+routing convention of the application you integrate with.
+
+## Contract values
+
+JSON cannot represent every ScVal type losslessly. Use `topics_xdr` and
+`data_xdr` when typed map keys, integer widths or exact bytes matter.
+
+## Coverage
+
+Decoded movements include account creation and merge, payments and path
+payments, executed trades, claimable-balance movements, liquidity-pool reserve
+movements, inflation payouts, clawbacks, fees and SAC movements. Operations that
+move nothing (SetOptions, ChangeTrust, ManageData, sequence bumps,
+sponsorship-only changes, TTL and footprint maintenance) produce no event.
+
+Only successful contract events enter the contract-event stream; diagnostic and
+system events are excluded. A failed transaction keeps its header and fee
+events. A muxed source is normalized to its base `G` address.
+
+This is decoded event coverage, not every Horizon operation. An unknown future
+protocol construct stops indexing rather than publishing incomplete history, so
+a new protocol can need a decoder update first. See
+[service readiness](/guides/readiness) when fresh data stops appearing.

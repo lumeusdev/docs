@@ -1,0 +1,248 @@
+---
+title: Alert on balance changes
+sidebarTitle: Balance alerts
+description: Get a signed webhook with the new balance whenever a wallet's balance changes, and alert below a threshold.
+---
+
+Watch a wallet without polling: a `balance.changed` webhook pushes the
+account's new balance for an asset after every ledger that changes it. This
+recipe runs a small receiver that verifies each delivery with the Lumeus
+verifier and prints an alert when the XLM balance drops below a threshold.
+
+You need a webhook key (`whk_...`, from **Webhooks > Webhook keys** in the
+dashboard) and a public HTTPS URL for your receiver, such as a `cloudflared`
+tunnel to `localhost:3000`. [Your first webhook](/webhooks/quickstart) shows the
+tunnel setup step by step.
+
+```bash
+# Your Testnet webhook key, the account to watch and your public HTTPS receiver
+export LUMEUS_WEBHOOK_KEY='paste-your-whk_-key'
+export WEBHOOKS_URL='https://webhooks-testnet.lumeus.dev'
+export ACCOUNT='GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR'
+export RECEIVER_URL='https://paste-your-tunnel-host'
+```
+
+<Warning>
+The sample account is the Testnet Friendbot. Its balance changes in about 240
+ledgers an hour, so a subscription to it uses the Free plan's 1,000 deliveries
+a day in about 4 hours; the endpoint then pauses until 00:00 UTC. Point
+`ACCOUNT` at your own wallet for a quiet stream, and delete the subscription
+when you are done.
+</Warning>
+
+## 1. Subscribe
+
+Create a subscription for one account's balance changes. The response holds the
+signing secret (`hmac_secret`) only once. The command saves it to
+`webhook-secret.txt` on success and refuses to overwrite an existing file; to
+retry a failed create, run it again in the same shell so it reuses
+`CREATE_KEY`:
+
+{/* not-run: creates a webhook subscription */}
+```bash
+export CREATE_KEY="${CREATE_KEY:-$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)}"
+if [ -e webhook-secret.txt ]; then
+  echo 'webhook-secret.txt already exists; not overwriting it' >&2
+else
+  STATUS="$(curl -sS -o create.json -w '%{http_code}' "$WEBHOOKS_URL/v1/subscriptions" \
+    -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" \
+    -H "Idempotency-Key: $CREATE_KEY" \
+    -H 'Content-Type: application/json' \
+    --data "$(jq -n --arg target "$RECEIVER_URL" --arg account "$ACCOUNT" \
+      '{name: "balance-alerts", target_url: $target, account: $account,
+        asset: "native", event_types: ["balance.changed"]}')")"
+  if [ "$STATUS" = 201 ] || [ "$STATUS" = 202 ]; then
+    (umask 077 && jq -r .hmac_secret create.json > webhook-secret.txt)
+  fi
+  jq 'del(.hmac_secret)' create.json > subscription.json && rm create.json
+  echo "HTTP $STATUS" && jq '{id, effective_state, activation_checkpoint, error}' subscription.json
+fi
+```
+
+`asset: "native"` limits it to XLM; leave it out to get every asset the account
+holds. `balance.changed` leaves out changes caused only by transaction fees; use
+`balance.changed.fees` to include them. Deliveries start after the subscription
+is `active` (usually right away; see [Lifecycle](/webhooks/lifecycle)).
+
+## 2. Run the receiver
+
+The receiver verifies each delivery with the shared verifier: the body
+signature, the timestamp and the signed delivery context (event id, network,
+lane and body hash), with both secrets during a key rotation. It records the
+event under the unique key `(network, id)`, checks the threshold and only then
+answers `204`. Keep that work fast: deliveries to one endpoint go one at a
+time, so a slow answer delays the next event. In production, insert the event
+into your database and enqueue the alert instead of printing it.
+
+Download the verifier for your language next to the receiver:
+
+<CodeGroup>
+
+```bash Node.js
+curl -fsSO https://docs.lumeus.dev/examples/verify-webhook.mjs
+```
+
+```bash Python
+curl -fsSO https://docs.lumeus.dev/examples/webhook_receiver.py
+```
+
+</CodeGroup>
+
+<CodeGroup>
+
+```javascript JavaScript
+// Node 18+: save as alerts.mjs next to verify-webhook.mjs and run
+//   WEBHOOK_SECRET="$(cat webhook-secret.txt)" ALERT_BELOW_XLM=100 node alerts.mjs
+import { createServer } from 'node:http';
+import { verifyWebhook } from './verify-webhook.mjs';
+
+const secrets = [process.env.WEBHOOK_SECRET, process.env.WEBHOOK_NEXT_SECRET].filter(Boolean);
+const threshold = process.env.ALERT_BELOW_XLM ?? '100';
+const belowRaw = BigInt(Math.round(Number(threshold) * 1e7));
+const seen = new Set(); // demo only: use a database UNIQUE key on (network, id)
+
+function record(network, event) {
+  if (event.type !== 'balance.changed') return;
+  const key = `${network}|${event.id}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  const now = BigInt(event.balance_raw);
+  const before = BigInt(event.previous_balance_raw);
+  console.log(`${event.closed_at} ${event.holder} ${event.asset} ${event.balance} (${now >= before ? '+' : '-'})`);
+  if (event.asset === 'native' && now < belowRaw && before >= belowRaw) {
+    console.log(`ALERT: ${event.holder} fell below ${threshold} XLM`);
+  }
+}
+
+createServer((req, res) => {
+  if (req.method !== 'POST') return res.writeHead(405).end();
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c));
+  req.on('end', () => {
+    const rawBody = Buffer.concat(chunks);
+    let context;
+    try {
+      ({ context } = verifyWebhook({ rawBody, headers: req.headers, secrets }));
+    } catch (error) {
+      console.warn('rejected:', error.message); // a short code, safe to log
+      return res.writeHead(400).end();
+    }
+    if (context.lane !== 'test') record(context.network, JSON.parse(rawBody));
+    res.writeHead(204).end(); // answer after the event is recorded
+  });
+}).listen(3000, () => console.log('listening on :3000'));
+```
+
+```python Python
+# Python 3.9+: save as alerts.py next to webhook_receiver.py and run
+#   WEBHOOK_SECRET="$(cat webhook-secret.txt)" ALERT_BELOW_XLM=100 python3 alerts.py
+import json
+import os
+from decimal import Decimal
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+from webhook_receiver import WebhookError, verify_webhook
+
+SECRETS = [s for s in (os.environ.get("WEBHOOK_SECRET"), os.environ.get("WEBHOOK_NEXT_SECRET")) if s]
+THRESHOLD = os.environ.get("ALERT_BELOW_XLM", "100")
+BELOW_RAW = int(Decimal(THRESHOLD) * 10**7)
+seen = set()  # demo only: use a database UNIQUE key on (network, id)
+
+
+def record(network, event):
+    if event.get("type") != "balance.changed" or (network, event["id"]) in seen:
+        return
+    seen.add((network, event["id"]))
+    now, before = int(event["balance_raw"]), int(event["previous_balance_raw"])
+    sign = "+" if now >= before else "-"
+    print(f"{event['closed_at']} {event['holder']} {event['asset']} {event.get('balance')} ({sign})", flush=True)
+    if event["asset"] == "native" and now < BELOW_RAW <= before:
+        print(f"ALERT: {event['holder']} fell below {THRESHOLD} XLM", flush=True)
+
+
+class Receiver(BaseHTTPRequestHandler):
+    def answer(self, status):
+        self.send_response(status)
+        self.end_headers()
+
+    def do_POST(self):
+        try:
+            raw_body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        except ValueError:
+            return self.answer(400)  # malformed Content-Length
+        try:
+            context = verify_webhook(raw_body, self.headers, SECRETS)["context"]
+        except WebhookError as error:
+            print("rejected:", error, flush=True)  # a short code, safe to log
+            return self.answer(400)
+        if context["lane"] != "test":
+            record(context["network"], json.loads(raw_body))
+        self.answer(204)  # answer after the event is recorded
+
+    def log_message(self, *args):
+        pass
+
+
+print("listening on :3000", flush=True)
+HTTPServer(("", 3000), Receiver).serve_forever()
+```
+
+</CodeGroup>
+
+## 3. What arrives
+
+Each delivery body is one `balance.changed` event. This one, for the sample
+account, is built from Testnet ledger 5330999, where nine 10,000 XLM transfers
+left the account:
+
+```json
+{
+  "id": "testnet:5330999:b:GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR:native",
+  "kind": "balance",
+  "type": "balance.changed",
+  "network": "testnet",
+  "ledger": 5330999,
+  "closed_at": "2026-10-22T14:16:22Z",
+  "holder": "GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR",
+  "asset": "native",
+  "contract_address": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+  "balance": "7075597982.5299856",
+  "balance_raw": "70755979825299856",
+  "previous_balance_raw": "70756879825299856",
+  "decimals": 7,
+  "source": "ledger_entry",
+  "archived": false,
+  "deleted": false
+}
+```
+
+The receiver prints:
+
+```text
+2026-10-22T14:16:22Z GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR native 7075597982.5299856 (-)
+```
+
+- One event per holder, asset and ledger: several changes in one ledger arrive
+  as one event with the balance after the ledger.
+- `balance` is the new absolute balance, so a missed or repeated delivery never
+  leaves your view wrong after the next one. Keep the event with the highest
+  `ledger` per holder and asset.
+- Deduplicate on `(network, id)`: delivery is at least once. See
+  [Deduplicate](/webhooks/receive#deduplicate).
+
+## Limits and credits
+
+| Plan | Deliveries |
+| --- | --- |
+| Free | One Testnet endpoint, up to 1,000 deliveries per organization per UTC day, no credits |
+| Starter, Growth, Scale, Enterprise | Testnet and Mainnet. Testnet deliveries cost 0 credits; Mainnet costs 1 credit per delivered event |
+
+Each attempt must get a `2xx` within 10 seconds; a failed delivery is
+tried up to 8 times. See [Receive and verify](/webhooks/receive) and
+[Webhooks overview](/webhooks/overview#plans).
+
+## Next
+
+- [Balance events](/webhooks/balance-events): selectors, fields and stitching with an Assets snapshot.
+- [Your first webhook](/webhooks/quickstart): tunnel, test delivery and cleanup.
+- [Wallet portfolio](/recipes/wallet-portfolio): the starting balances for your view.

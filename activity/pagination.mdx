@@ -1,0 +1,175 @@
+---
+title: Pagination
+description: Cursors, snapshots and completion markers.
+---
+
+Every Activity collection returns pages with a fixed snapshot and a `next`
+link. This page explains the page fields and how to walk a range to its end
+without missing or repeating events.
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+<TestnetSetup />
+
+## Page through a range
+
+Follow `_links.next` until `range_complete` is `true`. This loop reads the last
+200 ledgers of an account, oldest first:
+
+<CodeGroup>
+
+```javascript JavaScript
+const { ACTIVITY_URL, ACCOUNT, LUMEUS_API_KEY } = process.env;
+const headers = { Authorization: `Bearer ${LUMEUS_API_KEY}` };
+const head = await fetch(`${ACTIVITY_URL}/accounts/${ACCOUNT}/activity?limit=1`, { headers });
+const first = await head.json().catch(() => ({}));
+if (!head.ok) throw new Error(`${head.status} ${first.code ?? head.statusText}: ${first.error} (${first.request_id})`);
+let next = `/accounts/${ACCOUNT}/activity?order=asc&limit=1000&since_ledger=${first.read_view.published_through - 200}`;
+
+const RETRYABLE = ['rate_limited', 'busy', 'index_not_ready', 'unavailable'];
+
+for (let pages = 0, retries = 0; next && pages < 50; ) {
+  const response = await fetch(new URL(next, ACTIVITY_URL), { headers });
+  const page = await response.json().catch(() => ({})); // an edge 502 can be HTML
+  const wait = Number(response.headers.get('retry-after') ?? 2);
+  if (!response.ok && RETRYABLE.includes(page.code) && retries < 5 && wait <= 60) {
+    retries++;
+    await new Promise(r => setTimeout(r, wait * 1000));
+    continue; // same URL again
+  }
+  if (!response.ok) throw new Error(`${response.status} ${page.code}: ${page.error} (${page.request_id})`);
+  pages++;
+  retries = 0;
+  console.log(page._embedded.records.length, 'records');
+  next = page.range_complete ? null : page._links.next.href;
+  if (!next) console.log('checkpoint', page.scanned_through_ledger);
+}
+```
+
+```python Python
+import os
+import time
+import requests
+
+base, account = os.environ["ACTIVITY_URL"], os.environ["ACCOUNT"]
+headers = {"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"}
+head = requests.get(f"{base}/accounts/{account}/activity?limit=1", headers=headers, timeout=60)
+if not head.ok:
+    try:
+        err = head.json()
+    except ValueError:  # an edge 502 can be HTML
+        err = {}
+    raise RuntimeError(f"{head.status_code} {err.get('code', head.reason)}: {err.get('error')} ({err.get('request_id')})")
+first = head.json()
+next_url = f"/accounts/{account}/activity?order=asc&limit=1000&since_ledger={first['read_view']['published_through'] - 200}"
+
+RETRYABLE = {"rate_limited", "busy", "index_not_ready", "unavailable"}
+pages = retries = 0
+while next_url and pages < 50:
+    response = requests.get(base + next_url, headers=headers, timeout=60)
+    try:
+        page = response.json()
+    except ValueError:  # an edge 502 can be HTML
+        page = {}
+    wait = int(response.headers.get("Retry-After", "2"))
+    if not response.ok and page.get("code") in RETRYABLE and retries < 5 and wait <= 60:
+        retries += 1
+        time.sleep(wait)
+        continue  # same URL again
+    if not response.ok:
+        raise RuntimeError(f"{response.status_code} {page.get('code')}: {page.get('error')} ({page.get('request_id')})")
+    pages, retries = pages + 1, 0
+    print(len(page["_embedded"]["records"]), "records")
+    next_url = None if page["range_complete"] else page["_links"]["next"]["href"]
+    if not next_url:
+        print("checkpoint", page["scanned_through_ledger"])
+```
+
+</CodeGroup>
+
+Save the records and the `next` link together after each page, so a restart
+resumes where it stopped. The loop retries only `rate_limited`, `busy`,
+`index_not_ready` and `unavailable`, at most 5 times in a row, and stops when
+`Retry-After` is over 60 seconds (the daily Testnet request cap, which resets at
+00:00 UTC). `query_timeout` is not retried on purpose: narrow the range instead
+(see [snapshot and errors](#snapshot-and-errors)).
+
+## Page fields
+
+| Field | Meaning |
+| --- | --- |
+| `_embedded.records` | The events of this page. |
+| `limit` | Page size used for this request, after clamping. |
+| `range_complete` | `true` when no more matching events exist in the requested range at this snapshot. |
+| `scanned_through_ledger` | The ledger through which this walk is complete (see [checkpoints](#checkpoints)). |
+| `_links.self.href` | This page, with the snapshot pinned. |
+| `_links.next.href` | The next page. Absent when `range_complete` is `true`. |
+| `_links.prev.href` | The same walk in the opposite order, starting before this page's first record. |
+| `read_view.network` | `testnet` or `pubnet`. |
+| `read_view.generation` | Index generation. It changes after a Testnet reset. |
+| `read_view.decoder_version` | Version of the event decoder that produced the records. |
+| `read_view.first_ledger` | The oldest ledger in history (3 on both networks). |
+| `read_view.snapshot_ledger` | The fixed upper bound of this walk. Every page of the walk reads through this ledger and no further. |
+| `read_view.published_through` | The newest ledger published when the snapshot was taken. Equal to `snapshot_ledger`; read it from a fresh request to find the current tip. |
+
+`paging_token` on each record is the cursor of that record. Treat it as opaque:
+it is neither an event ID nor a page number.
+
+## Follow the returned URL
+
+Use the full `next` URL as it is: it carries the cursor, order, range,
+`generation` and `snapshot_ledger`. Resolve it against the same Activity host
+and never send your key to another origin.
+
+`range_complete` is exact. A full final page can already be complete, so you
+need no extra request to confirm the end.
+
+A page can hold fewer records than `limit`, or none, while `range_complete` is
+`false`. There is no maximum range width, but each page scans the index for at
+most about 8 seconds and then returns what it found; `next` resumes after the
+last fully scanned ledger. A page also ends early when cold history is slow to
+read or its records reach 16 MiB; `next` then continues after the last record.
+A short or empty page is not the end of the range.
+
+## Checkpoints
+
+`scanned_through_ledger` is present on every complete page, in both orders, and
+on ascending pages that the scan budget stopped early. Save it with your records
+as the ledger through which your copy is complete, even when no events matched.
+Do not use the largest event ledger you received.
+
+A `since_ledger` beyond the snapshot is not an error. The page is empty and
+complete, has no `next`, and reports `scanned_through_ledger` equal to
+`read_view.snapshot_ledger`. A sync loop can always save the checkpoint it gets
+back and ask again later.
+
+## Snapshot and errors
+
+Send `generation` and `snapshot_ledger` together, or neither. The same rule
+applies to transaction-header requests.
+
+| Response | Meaning | What to do |
+| --- | --- | --- |
+| `409 generation_changed` | The generation changed (a Testnet reset). | Start a new walk without `generation` and `snapshot_ledger`. |
+| `400` "below the first ledger" | `snapshot_ledger` is older than history. | Pin a later snapshot. |
+| `503 index_not_ready` | The snapshot is not readable yet, for example above the tip. | Wait `Retry-After` (usually 2 seconds) and retry the same URL. |
+| `503 busy` | Reads are saturated; the request already queued for up to about 10 seconds. | Wait `Retry-After` (usually 2 seconds) and retry the same URL. |
+| `503 query_timeout` | The read ran out of time (`Retry-After: 30`). | Narrow `since_ledger`/`until_ledger` or lower `limit`. Do not repeat the same URL. |
+| `202` | A pending operation. Only prepaid workspaces that send an `Idempotency-Key` see it. | Check the operation as described in [idempotency](/guides/idempotency). |
+
+`Idempotency-Key` is optional on reads. If you send it, it must be 8 to 128
+printable ASCII characters without spaces, or the request returns `400`. On
+Free and paid plans it is checked and otherwise ignored; see
+[idempotency](/guides/idempotency). All codes are in [errors](/guides/errors).
+
+## JavaScript client
+
+[activity-client.mjs](/examples/activity-client.mjs) is a bounded async page
+iterator for production use. Pass `baseURL`, `apiKey`, `initialPath` and an
+`idForURL` callback that durably returns the same key for a URL. It stops when
+`range_complete` is `true`, retries `429`, `busy`, `index_not_ready`,
+`unavailable` and other `5xx` up to 3 times while honoring `Retry-After`
+(a `Retry-After` over 60 seconds throws instead of sleeping), and throws an `ActivityError` (with `code`, `requestID` and `retryAfter`) on
+`query_timeout` and every other error, so you can narrow the range. It rejects
+cross-origin links, changed snapshots and cycles. It
+reads at most 10 pages by default; save your `next` link to resume.

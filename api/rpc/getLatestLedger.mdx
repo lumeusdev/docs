@@ -1,0 +1,123 @@
+---
+title: "getLatestLedger"
+description: "Get the latest closed ledger, with its header and metadata XDR."
+openapi: "/api-reference/rpc/getLatestLedger.json POST /"
+---
+
+Returns the latest ledger the node has closed: sequence, hash, close time, protocol version, and its header and close metadata XDR. The metadata makes the answer large (about 260 KB on Testnet, 1 to 2.3 MB on Mainnet), so on Mainnet it costs extra size credits. If you only need the tip, call `getHealth`.
+
+The examples call Testnet with your key in `LUMEUS_API_KEY`; the SDK tabs use `@stellar/stellar-sdk` and the Python `stellar-sdk` ([SDK setup and errors](/rpc/sdks)). On Mainnet, use `https://rpc.lumeus.dev` and a `lum_live_` key.
+
+<RequestExample>
+```bash cURL
+curl --fail-with-body -s https://rpc-testnet.lumeus.dev \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}'
+```
+
+```javascript JavaScript
+// Node 18+. Save as rpc.mjs and run: node rpc.mjs
+const rpc = async (method, params) => {
+  const res = await fetch('https://rpc-testnet.lumeus.dev', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.LUMEUS_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  });
+  const body = await res.json();
+  if (body.error) throw new Error(`${body.error.data ?? body.error.code}: ${body.error.message}`);
+  return body.result;
+};
+
+console.log(JSON.stringify(await rpc('getLatestLedger'), null, 2));
+```
+
+```python Python
+import json
+import os
+
+import requests
+
+
+def rpc(method, params=None):
+    body = {"jsonrpc": "2.0", "id": 1, "method": method}
+    if params is not None:
+        body["params"] = params
+    res = requests.post(
+        "https://rpc-testnet.lumeus.dev",
+        json=body,
+        headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+        timeout=30,
+    )
+    data = res.json()
+    if "error" in data:
+        raise RuntimeError(f"{data['error'].get('data')}: {data['error']['message']}")
+    return data["result"]
+
+
+print(json.dumps(rpc("getLatestLedger"), indent=2))
+```
+
+```javascript JavaScript SDK
+// npm install @stellar/stellar-sdk. Save as sdk.mjs and run: node sdk.mjs
+import { rpc } from '@stellar/stellar-sdk';
+
+const server = new rpc.Server('https://rpc-testnet.lumeus.dev', {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+
+// headerXdr and metadataXdr arrive parsed as XDR objects; metadataXdr is large.
+const { id, sequence, closeTime, protocolVersion } = await server.getLatestLedger();
+console.log(JSON.stringify({ id, sequence, closeTime, protocolVersion }, null, 2));
+```
+
+```python Python SDK
+# pip install stellar-sdk
+import os
+
+from stellar_sdk import SorobanServer
+from stellar_sdk.client.requests_client import RequestsClient
+
+# num_retries=0: raise 429/503 at once instead of sleeping through Retry-After.
+server = SorobanServer(
+    "https://rpc-testnet.lumeus.dev",
+    client=RequestsClient(num_retries=0, custom_headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"}),
+)
+
+# header_xdr and metadata_xdr are base64 XDR; metadata_xdr is large.
+ledger = server.get_latest_ledger()
+print(ledger.model_dump_json(by_alias=True, indent=2, exclude={"header_xdr", "metadata_xdr"}))
+```
+</RequestExample>
+
+
+## Result
+
+The fields of `result` (stellar-rpc 29). Fields marked "Present only when it applies" can be absent.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | Hash of the latest ledger (hex). |
+| `protocolVersion` | integer | Protocol version of the ledger. |
+| `sequence` | integer | Sequence of the latest ledger. |
+| `closeTime` | string | Close time. Unix seconds, as a string. |
+| `headerXdr` | string | Base64 LedgerHeader XDR. |
+| `metadataXdr` | string | Base64 LedgerCloseMeta XDR (large). |
+
+## Parameters
+
+None. Leave `params` out, or send `null` or `{}`.
+
+## Credits and limits
+
+- **Mainnet:** 1 credit plus 1 credit per started 64 KiB of response; a 1 MB Mainnet answer costs 1 + 16 = 17. A call that returns a JSON-RPC error costs nothing.
+- **Testnet:** free. Each call counts toward your organization's 10,000 Testnet requests a day; above that, calls get 429 `rate_limited` until 00:00 UTC.
+- Response ceiling 16 MiB. The example response shortens the XDR fields.
+- The plan RPC rate applies per call; each call in a batch counts as one.
+
+## Errors
+
+Gateway errors are JSON-RPC errors with the machine code in `error.data` and the request ID in `error.request_id`. Common ones: `-32602` (`invalid_request`, HTTP 400) for invalid params, `-32000` with `unauthorized` (401), `rate_limited` (429, wait `Retry-After` seconds) or `unavailable` (503). See [errors](/guides/errors).

@@ -1,0 +1,134 @@
+---
+title: "sendTransaction"
+description: "Submit a signed transaction."
+openapi: "/api-reference/rpc/sendTransaction.json POST /"
+---
+
+Submits a signed transaction and returns at once with its hash and a status: `PENDING` (accepted), `DUPLICATE`, `TRY_AGAIN_LATER` or `ERROR` (with `errorResultXdr`). It does not wait for the ledger: poll `getTransaction` with the hash until the status is `SUCCESS` or `FAILED`. Set `SIGNED_XDR` to a signed envelope first; the [transactions guide](/rpc/transactions) builds one.
+
+The examples call Testnet with your key in `LUMEUS_API_KEY`; the SDK tabs use `@stellar/stellar-sdk` and the Python `stellar-sdk` ([SDK setup and errors](/rpc/sdks)) (the curl example uses `jq`). On Mainnet, use `https://rpc.lumeus.dev` and a `lum_live_` key.
+
+<RequestExample>
+```bash cURL
+# SIGNED_XDR: a base64 signed TransactionEnvelope
+curl --fail-with-body -s https://rpc-testnet.lumeus.dev \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc --arg tx "$SIGNED_XDR" '{jsonrpc:"2.0",id:1,method:"sendTransaction",params:{transaction:$tx}}')"
+```
+
+```javascript JavaScript
+// Node 18+. Save as rpc.mjs and run: node rpc.mjs
+const rpc = async (method, params) => {
+  const res = await fetch('https://rpc-testnet.lumeus.dev', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.LUMEUS_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  });
+  const body = await res.json();
+  if (body.error) throw new Error(`${body.error.data ?? body.error.code}: ${body.error.message}`);
+  return body.result;
+};
+
+const sent = await rpc('sendTransaction', { transaction: process.env.SIGNED_XDR });
+console.log(JSON.stringify(sent, null, 2));
+```
+
+```python Python
+import json
+import os
+
+import requests
+
+
+def rpc(method, params=None):
+    body = {"jsonrpc": "2.0", "id": 1, "method": method}
+    if params is not None:
+        body["params"] = params
+    res = requests.post(
+        "https://rpc-testnet.lumeus.dev",
+        json=body,
+        headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+        timeout=30,
+    )
+    data = res.json()
+    if "error" in data:
+        raise RuntimeError(f"{data['error'].get('data')}: {data['error']['message']}")
+    return data["result"]
+
+
+sent = rpc("sendTransaction", {"transaction": os.environ["SIGNED_XDR"]})
+print(json.dumps(sent, indent=2))
+```
+
+```javascript JavaScript SDK
+// npm install @stellar/stellar-sdk. Save as sdk.mjs and run: node sdk.mjs
+import { Networks, TransactionBuilder, rpc } from '@stellar/stellar-sdk';
+
+const server = new rpc.Server('https://rpc-testnet.lumeus.dev', {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+
+// SIGNED_XDR: a base64 signed TransactionEnvelope.
+const tx = TransactionBuilder.fromXDR(process.env.SIGNED_XDR, Networks.TESTNET);
+const sent = await server.sendTransaction(tx);
+// errorResult (status ERROR) arrives parsed as an XDR object.
+const { status, hash, latestLedger, latestLedgerCloseTime } = sent;
+console.log(JSON.stringify({ status, hash, latestLedger, latestLedgerCloseTime }, null, 2));
+```
+
+```python Python SDK
+# pip install stellar-sdk
+import os
+
+from stellar_sdk import SorobanServer
+from stellar_sdk.client.requests_client import RequestsClient
+
+# num_retries=0: raise 429/503 at once instead of sleeping through Retry-After.
+server = SorobanServer(
+    "https://rpc-testnet.lumeus.dev",
+    client=RequestsClient(num_retries=0, custom_headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"}),
+)
+
+# SIGNED_XDR: a base64 signed TransactionEnvelope.
+sent = server.send_transaction(os.environ["SIGNED_XDR"])
+print(sent.model_dump_json(by_alias=True, indent=2))
+```
+</RequestExample>
+
+
+## Result
+
+The fields of `result` (stellar-rpc 29). Fields marked "Present only when it applies" can be absent.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `status` | string | PENDING (accepted; poll getTransaction), DUPLICATE (already submitted), TRY_AGAIN_LATER (not accepted now; resubmit later) or ERROR (rejected; see errorResultXdr). |
+| `hash` | string | Transaction hash: poll getTransaction with it. |
+| `latestLedger` | integer | Latest ledger the node has. |
+| `latestLedgerCloseTime` | string | Close time of latestLedger. Unix seconds, as a string. |
+| `errorResultXdr` | string | ERROR only: TransactionResult explaining the rejection. Base64 XDR (with xdrFormat json, the matching Json field instead). |
+| `errorResultJson` | JSON | TransactionResult. Decoded JSON; only with xdrFormat json. |
+| `diagnosticEventsXdr` | string[] | ERROR only: base64 DiagnosticEvent XDR. |
+| `diagnosticEventsJson` | JSON[] | Present only when it applies. |
+
+## Parameters
+
+| Name | Type | Rules |
+| --- | --- | --- |
+| `transaction` | string | Required. Base64 signed TransactionEnvelope XDR, at most 350,000 characters. |
+| `xdrFormat` | string | `base64` (default) or `json`. |
+
+## Credits and limits
+
+- **Mainnet:** 2 credits plus 1 credit per started 64 KiB of response, so a small answer costs 3 credits. A call that returns a JSON-RPC error costs nothing.
+- **Testnet:** free. Each call counts toward your organization's 10,000 Testnet requests a day; above that, calls get 429 `rate_limited` until 00:00 UTC.
+- Read-only and publishable keys get 403. If the gateway loses the node's answer it returns 503 with `error.data` `submission_outcome_unknown` and `error.transaction_hash`: poll `getTransaction` with that hash before building a new transaction. Resubmitting the same signed envelope is safe. The example response is the stellar-rpc result shape, not a live capture (sending is a write).
+- The plan RPC rate applies per call; each call in a batch counts as one.
+
+## Errors
+
+Gateway errors are JSON-RPC errors with the machine code in `error.data` and the request ID in `error.request_id`. Common ones: `-32602` (`invalid_request`, HTTP 400) for invalid params, `-32000` with `unauthorized` (401), `rate_limited` (429, wait `Retry-After` seconds) or `unavailable` (503). See [errors](/guides/errors).

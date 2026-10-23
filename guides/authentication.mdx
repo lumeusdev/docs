@@ -1,0 +1,151 @@
+---
+title: Authentication
+description: API keys, networks, key rotation and read-only keys.
+---
+
+Every request sends a key in the `Authorization` header. Keys belong to one
+network, so pick the key and the host of the same network. This page covers
+which key goes where, how to create and rotate keys, and how Mainnet and
+Testnet differ.
+
+```http
+Authorization: Bearer <key>
+```
+
+RPC also accepts the key in an `X-API-Key` header, for tools that cannot set
+`Authorization`. Browsers cannot send `X-API-Key` cross-origin, so use
+`Authorization` from web pages.
+
+## Which key goes where
+
+| Credential | Accepted by |
+| --- | --- |
+| `lum_test_...` | Testnet Activity API, Assets API and RPC |
+| `lum_live_...` | Mainnet Activity API, Assets API and RPC |
+| `lum_pub_test_...` / `lum_pub_live_...` | The same hosts from a web page; see [browser keys](/guides/browser-keys) |
+| `whk_...` | Webhooks, on the network where the key was issued |
+| Verified dashboard session | Activity and Webhooks management, and Activity reads. RPC does not accept sessions. |
+| `whsec_...` | Your webhook receiver only. This is a signing secret, not an API key. |
+
+A key on the wrong network's host returns `401`, and the message names the
+right host. The `whk_` prefix does not show the network, so keep a note of the
+host where you created each webhook key.
+
+In the **API Reference** playground ("Try it"), choose the server that matches
+your key: a `lum_test_` key needs a Testnet server and a `lum_live_` key a
+Mainnet server. Webhooks operations take a `whk_` key. Server keys work there
+because the APIs allow browser calls from the docs site; see
+[browser calls](#browser-calls-and-cors).
+
+## Networks
+
+| | Testnet | Mainnet |
+| --- | --- | --- |
+| Activity | `https://api-testnet.lumeus.dev` | `https://api.lumeus.dev` |
+| Assets | `https://assets-testnet.lumeus.dev` | `https://assets.lumeus.dev` |
+| Webhooks | `https://webhooks-testnet.lumeus.dev` | `https://webhooks.lumeus.dev` |
+| RPC | `https://rpc-testnet.lumeus.dev` | `https://rpc.lumeus.dev` |
+| API key prefix | `lum_test_` | `lum_live_` |
+| Network name in management and billing | `testnet` | `mainnet` |
+| `network` in events and `read_view` | `testnet` | `pubnet` |
+
+`pubnet` and `mainnet` name the same network. Your workspace and plan cover
+both networks. Testnet is free, up to 10,000 requests a day (see
+[Testnet is free](/guides/limits#testnet-is-free)); Mainnet requests use your
+monthly credits. Keys, webhook subscriptions and history are separate per
+network.
+
+**Testnet resets.** Stellar resets Testnet from time to time, and ledger numbers
+then repeat. Every Activity response names its `generation` in `read_view`;
+store it with your cursors and event IDs. After a reset, a request pinned to the
+old generation returns `409 generation_changed`: start a new walk, and keep
+older data apart from the new history.
+
+**Signing transactions.** Call RPC `getNetwork` and check the passphrase before
+you sign. A Mainnet key cannot make a Testnet-signed transaction valid on
+Mainnet. Sign locally and send only the envelope XDR, never a secret seed.
+
+## Create a key
+
+Create keys in the dashboard under **API keys**, or with `POST /v1/keys` on the
+Activity host, authenticated with a full key:
+
+```bash
+curl --fail-with-body "$ACTIVITY_URL/v1/keys" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"name":"reporting job","access":"read"}'
+```
+
+| Field | Rules |
+| --- | --- |
+| `name` | A label for the dashboard and logs. |
+| `network` | `testnet` or `mainnet`. Defaults to the network of the host you call. |
+| `access` | `full` (default), `read` or `publishable`. See [read-only keys](#read-only-keys-and-expiry) and [browser keys](/guides/browser-keys). |
+| `expires_at` | Optional RFC 3339 time, in the future and at most five years away. |
+
+The `201` response returns the secret once in `api_key`, with `id`,
+`key_prefix`, `network`, `base_url`, `access` and `expires_at`. Store it right
+away; `GET /v1/keys` lists only metadata and prefixes.
+
+Webhook keys are separate: create them in the dashboard under
+**Webhooks → Webhook keys**, or with `POST /v1/keys` on the Webhooks host using
+an existing `whk_` key. That response returns the secret in `secret`.
+
+## Manage and rotate keys
+
+| Action | Request | Result |
+| --- | --- | --- |
+| List | `GET /v1/keys` | Metadata and prefixes, without secret values |
+| Rename | `PATCH /v1/keys/{id}` | Activity only; returns the key metadata |
+| Rotate | `POST /v1/keys/{id}/rotate` | Activity only; returns the new `api_key`, and `previous` with the old key's `expires_at` |
+| Revoke | `DELETE /v1/keys/{id}` | Activity returns `200`; Webhooks returns `204` |
+
+To rotate an Activity key, call rotate with `overlap_seconds` (0 to 604800,
+default 86400). The new key has the same name, network and access level. The
+old key keeps working until its new `expires_at`: deploy the new key, check
+that requests succeed, then revoke the old key to end the overlap early.
+`overlap_seconds: 0` revokes the old key immediately. A key can be rotated once;
+rotating a revoked, expired or already rotating key returns `409`.
+
+A revoked or expired key is refused by every Activity, Assets and RPC host
+within 2 seconds. For webhook keys, create a replacement, deploy it, then revoke
+the old key. Webhook [signing-key rotation](/webhooks/lifecycle#rotate-a-signing-key)
+is a separate operation.
+
+## Read-only keys and expiry
+
+- `access: "read"`: the key calls product data routes and RPC read methods.
+  Workspace, key and billing routes (`/v1/*`, `/billing/*`) and RPC
+  `sendTransaction`, alone or in a batch, return `403`. Use read keys where a
+  leak should not allow writes, for example in a reporting job or a coding
+  agent.
+- `expires_at`: the key stops working at that time and returns `401`
+  afterwards. Rotating it gives the replacement the same lifetime, counted from
+  the rotation. Set it on keys for short-lived work.
+
+## Browser calls and CORS
+
+All four APIs answer cross-origin browser requests from exactly two origins:
+`https://docs.lumeus.dev` (the "Try it" playground) and
+`https://app.lumeus.dev` (the dashboard). Full and read keys work from those
+two sites. Any other website cannot read a response made with a server key,
+because the browser blocks it. From your own web pages, use a
+[publishable key](/guides/browser-keys), which carries its own list of allowed
+origins.
+
+| | Value |
+| --- | --- |
+| Allowed origins (server keys) | `https://docs.lumeus.dev`, `https://app.lumeus.dev`; no credentials, `Vary: Origin` |
+| Preflight | `204`; methods `GET, POST, PATCH, DELETE, OPTIONS`; headers `Authorization, Content-Type, Idempotency-Key, If-Match, If-None-Match, X-Request-Id`; `Access-Control-Max-Age: 600` |
+| Exposed response headers | `ETag`, `Link`, `Location`, `Retry-After`, `X-Request-Id`, `X-Lumeus-Operation-Id`, `X-Lumeus-Idempotency`, `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`, on errors too |
+
+## Scope and storage
+
+Keys belong to your organization. More keys share the same credits and rate
+limits; they do not add capacity.
+
+Keep full and read keys out of frontend bundles, mobile apps and URLs. Call
+Lumeus from your backend, or use a [browser key](/guides/browser-keys) in web
+pages. If a key is exposed, revoke it. Never include keys in logs or support
+requests.

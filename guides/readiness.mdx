@@ -1,0 +1,56 @@
+---
+title: Health checks
+description: Check service liveness and whether chain data is current.
+---
+
+Use these routes to check whether a Lumeus API is up and its data is current,
+for example in a status page or before a batch job. All four API hosts (Activity,
+Assets, Webhooks and RPC) serve them on both networks, without authentication
+and without charge.
+
+| Route | Response | What it checks |
+| --- | --- | --- |
+| `GET /healthz` | `200` | The serving process and its database |
+| `GET /readyz` | `200 {"ready":true}` | Dependencies are reachable and data is current |
+| `GET /readyz` | `503 {"ready":false}` with `Retry-After: 5` | A dependency is unavailable or the API is catching up |
+
+```bash
+for host in api-testnet assets-testnet webhooks-testnet rpc-testnet; do
+  printf '%s ' "$host"
+  curl --silent "https://$host.lumeus.dev/readyz"
+done
+```
+
+```text Output
+api-testnet {"ready":true}
+assets-testnet {"ready":true}
+webhooks-testnet {"ready":true}
+rpc-testnet {"ready":true}
+```
+
+Readiness is cached for five seconds. Liveness can stay healthy while readiness
+fails.
+
+## What "current" means
+
+Every host requires a healthy Stellar RPC node whose latest ledger closed within
+the last 90 seconds. Each API then adds its own check:
+
+| API | Ready when |
+| --- | --- |
+| Activity | Ingestion is within 12 ledgers of the tip, updated in the last 90 seconds, and everything ingested is published to reads |
+| Assets | The balance index is within 60 ledgers of the tip (about 5 minutes) |
+| Webhooks | Ingestion is within 12 ledgers of the tip, updated in the last 90 seconds, billing is reachable and endpoints can be created on that network |
+| RPC | The node check above |
+
+Webhooks readiness does not check your receiver. If callbacks stop arriving,
+inspect the subscription's deliveries and coverage.
+
+## When readiness fails
+
+Back off for `Retry-After` and keep your saved pagination state. Do not replace
+missing data with an empty successful result.
+
+After an outage, ingestion resumes from where it stopped and publishes ledgers
+in order, so catch-up can take a while. Keep your saved generation and cursor
+unless the API reports a generation change (`409 generation_changed`).

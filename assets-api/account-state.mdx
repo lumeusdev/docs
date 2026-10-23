@@ -1,0 +1,263 @@
+---
+title: Claims, offers, allowances
+description: Claimable balances, open DEX offers and token allowances of an address.
+---
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+These three routes show the parts of an account's state that are not plain
+balances: funds waiting to be claimed, offers that lock liabilities on the DEX,
+and contract allowances that let someone else spend a token. Use them to show
+"pending" funds in a wallet, to explain why a balance is not fully spendable,
+or to review token approvals.
+
+All three are paged like [holdings](/assets-api/holdings), cost 1 credit per
+started 100 records on Mainnet (Testnet requests are free), and are allowed for [publishable keys](/guides/browser-keys).
+
+<TestnetSetup />
+
+The sample `ACCOUNT` has none of these entries, so each example below defines a
+real Testnet address that has them.
+
+## Claimable balances
+
+<CodeGroup>
+
+```bash curl
+export CLAIMANT='GCMIOIR346PXAPZB7J3SI4UCP5SAGSKNABB73K5FJPGIMYLMIV2UEHPA'
+
+curl --fail-with-body "$ASSETS_URL/accounts/$CLAIMANT/claimable-balances" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY"
+```
+
+```js JavaScript
+const CLAIMANT = 'GCMIOIR346PXAPZB7J3SI4UCP5SAGSKNABB73K5FJPGIMYLMIV2UEHPA';
+const res = await fetch(
+  `${process.env.ASSETS_URL}/accounts/${CLAIMANT}/claimable-balances`,
+  { headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` } },
+);
+if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+for (const cb of (await res.json())._embedded.records) {
+  console.log(cb.balance_id, cb.asset, cb.amount, cb.claimable_now);
+}
+```
+
+```python Python
+import os, requests
+
+CLAIMANT = "GCMIOIR346PXAPZB7J3SI4UCP5SAGSKNABB73K5FJPGIMYLMIV2UEHPA"
+res = requests.get(
+    f"{os.environ['ASSETS_URL']}/accounts/{CLAIMANT}/claimable-balances",
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    timeout=30,
+)
+res.raise_for_status()
+for cb in res.json()["_embedded"]["records"]:
+    print(cb["balance_id"], cb["asset"], cb["amount"], cb["claimable_now"])
+```
+
+</CodeGroup>
+
+Trimmed live response (1 of 2 records). Claimable balances on Testnet are
+claimed often, so your answer may list different ones:
+
+```json
+{
+  "_embedded": {
+    "records": [
+      {
+        "balance_id": "00000000728f3385e5cdbb73dfe2580105bdd6de9746a09c1d39275768b9b87bb6710623",
+        "asset": "TS100:GATQA24ZLMK6BT2N74NK762SZVIJATITTTV4TIEAUG2532PPUF3XTDDH",
+        "asset_type": "credit_alphanum12",
+        "amount": "1250.0000000", "amount_raw": "12500000000", "decimals": 7,
+        "sponsor": "GBNLD5SMAHX2T5V6GGIF6SNM7CWLUX53YTIBLYXLC53AOX4G26FYE56V",
+        "flags": ["clawback_enabled"],
+        "claimable_now": true,
+        "claimants": [
+          {
+            "destination": "GCMIOIR346PXAPZB7J3SI4UCP5SAGSKNABB73K5FJPGIMYLMIV2UEHPA",
+            "predicate": {"not": {"abs_before": "2026-10-22T14:39:00Z", "abs_before_epoch": "1792679940"}},
+            "claimable_now": true
+          },
+          {
+            "destination": "GBNLD5SMAHX2T5V6GGIF6SNM7CWLUX53YTIBLYXLC53AOX4G26FYE56V",
+            "predicate": {"unconditional": true},
+            "claimable_now": true
+          }
+        ],
+        "last_modified_ledger": 5330563
+      }
+    ]
+  },
+  "address": "GCMIOIR346PXAPZB7J3SI4UCP5SAGSKNABB73K5FJPGIMYLMIV2UEHPA",
+  "role": "claimant",
+  "read_view": {"network": "testnet", "as_of_ledger": 5331471, "as_of_closed_at": "2026-10-22T14:55:42Z"}
+}
+```
+
+- `role=claimant` (default) lists balances the address can claim;
+  `role=sponsor` lists balances it sponsors (the reserve payer).
+- Each claimant has a `predicate` tree in Stellar's shape (`unconditional`,
+  `and`, `or`, `not`, `abs_before`), with absolute times as both an ISO time and
+  a Unix `abs_before_epoch`. The example reads "claimable after 14:39 UTC".
+- `claimable_now` is evaluated at `read_view.as_of_closed_at`. On the record it
+  answers for the requested address (`role=claimant` only).
+- Records are sorted by `balance_id`.
+
+## Offers
+
+<CodeGroup>
+
+```bash curl
+export TRADER='GBPAFJ3COSPSNDXZIPD36553DTM72W3R5WF2JU2L5SBGOLNR42ZORDTV'
+
+curl --fail-with-body "$ASSETS_URL/accounts/$TRADER/offers" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY"
+```
+
+```js JavaScript
+const TRADER = 'GBPAFJ3COSPSNDXZIPD36553DTM72W3R5WF2JU2L5SBGOLNR42ZORDTV';
+const res = await fetch(`${process.env.ASSETS_URL}/accounts/${TRADER}/offers`, {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+for (const o of (await res.json())._embedded.records) {
+  console.log(o.offer_id, `sell ${o.amount} ${o.selling} for ${o.buying} at ${o.price}`);
+}
+```
+
+```python Python
+import os, requests
+
+TRADER = "GBPAFJ3COSPSNDXZIPD36553DTM72W3R5WF2JU2L5SBGOLNR42ZORDTV"
+res = requests.get(
+    f"{os.environ['ASSETS_URL']}/accounts/{TRADER}/offers",
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    timeout=30,
+)
+res.raise_for_status()
+for o in res.json()["_embedded"]["records"]:
+    print(o["offer_id"], f"sell {o['amount']} {o['selling']} for {o['buying']} at {o['price']}")
+```
+
+</CodeGroup>
+
+One live record:
+
+```json
+{
+  "offer_id": "929789",
+  "seller": "GBPAFJ3COSPSNDXZIPD36553DTM72W3R5WF2JU2L5SBGOLNR42ZORDTV",
+  "selling": "CETES:GC3CW7EDYRTWQ635VDIGY6S4ZUF5L6TQ7AA4MWS7LEQDBLUSZXV7UPS4",
+  "buying": "USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  "amount": "162894.0000000", "amount_raw": "1628940000000",
+  "price": "0.0613896", "price_n": 10000, "price_d": 162894,
+  "flags": 0, "last_modified_ledger": 5330916
+}
+```
+
+Open DEX offers where the address sells, sorted by `offer_id`. `price` is
+`price_n / price_d` units of `buying` per unit of `selling`, rounded to 7
+places; use `price_n` and `price_d` for exact math. `flags` is the offer flags
+bitmask (`1` is passive). The `amount` of each offer is the `selling_liabilities`
+shown on [holdings](/assets-api/holdings): 162,894 CETES here.
+
+## Allowances
+
+<CodeGroup>
+
+```bash curl
+export SPENDER='CAPBMXIQTICKWFPWFDJWMAKBXBPJZUKLNONQH3MLPLLBKQ643CYN5PRW'
+
+curl --fail-with-body --get "$ASSETS_URL/accounts/$SPENDER/allowances" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode 'role=spender'
+```
+
+```js JavaScript
+const SPENDER = 'CAPBMXIQTICKWFPWFDJWMAKBXBPJZUKLNONQH3MLPLLBKQ643CYN5PRW';
+const url = new URL(`${process.env.ASSETS_URL}/accounts/${SPENDER}/allowances`);
+url.searchParams.set('role', 'spender');
+const res = await fetch(url, {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+for (const a of (await res.json())._embedded.records) {
+  console.log(a.owner, a.asset, a.amount, a.expiration_ledger, a.verified);
+}
+```
+
+```python Python
+import os, requests
+
+SPENDER = "CAPBMXIQTICKWFPWFDJWMAKBXBPJZUKLNONQH3MLPLLBKQ643CYN5PRW"
+res = requests.get(
+    f"{os.environ['ASSETS_URL']}/accounts/{SPENDER}/allowances",
+    params={"role": "spender"},
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    timeout=30,
+)
+res.raise_for_status()
+for a in res.json()["_embedded"]["records"]:
+    print(a["owner"], a["asset"], a["amount"], a["expiration_ledger"], a["verified"])
+```
+
+</CodeGroup>
+
+One live record:
+
+```json
+{
+  "asset": "BLND:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56",
+  "asset_type": "credit_alphanum4",
+  "contract_id": "CB22KRA3YZVCNCQI64JQ5WE7UY2VAV7WFLK6A2JN3HEX56T2EDAFO7QF",
+  "owner": "CBDVWXT433PRVTUNM56C3JREF3HIZHRBA64NB2C3B2UNCKIS65ZYCLZA",
+  "spender": "CAPBMXIQTICKWFPWFDJWMAKBXBPJZUKLNONQH3MLPLLBKQ643CYN5PRW",
+  "amount": "1092193.0307809", "amount_raw": "10921930307809", "decimals": 7,
+  "expiration_ledger": 7345644, "live_until_ledger": 7345644, "expired": false,
+  "source": "ledger_entry", "verified": true,
+  "last_modified_ledger": 5328585
+}
+```
+
+- `role=owner` (default) lists allowances the address granted; `role=spender`
+  lists allowances it can use. Records are sorted by `contract_id`, then by the
+  other party.
+- Allowances are temporary ledger entries. An absent or expired allowance is 0.
+  Expired ones are listed (with `expired: true` and amount 0) only with
+  `include=expired`.
+- Allowances cannot be rebuilt from events, so they come only from state.
+  `source` is `ledger_entry` for SAC (classic asset) allowances and
+  `token_storage` for custom tokens. `verified: false` means the custom token's
+  storage layout is not recognized, so treat the amount as a best-effort reading.
+- An unlimited approval is the i128 maximum: `amount_raw`
+  `170141183460469231731687303715884105727`, which a 7-decimal token shows as
+  `17014118346046923173168730371588.4105727`. Show it as "unlimited" and never
+  add it up or convert it to a float.
+
+## Parameters
+
+| Route | Parameters |
+| --- | --- |
+| Claimable balances | `role` (`claimant` or `sponsor`), `limit`, `cursor` |
+| Offers | `limit`, `cursor` |
+| Allowances | `role` (`owner` or `spender`), `include=expired`, `limit`, `cursor` |
+
+`limit` defaults to 50 and is lowered to 200 above that. Any other parameter or
+value returns `400 invalid_request`. These routes do not take `as_of_ledger`.
+
+## Errors
+
+| Status | `code` | What to do |
+| --- | --- | --- |
+| `400` | `invalid_request` | Fix the address, `role`, `include` or cursor |
+| `401` | `unauthorized` | Check the key and the host's network |
+| `403` | `forbidden` | A publishable key was used from an Origin it does not allow |
+| `503` | `busy`, `query_timeout`, `index_not_ready` | Wait `Retry-After` |
+
+See [errors](/guides/errors).
+
+## Next
+
+- [Holdings](/assets-api/holdings): spendable amounts after liabilities.
+- [Token registry](/assets-api/registry): name and flags of each asset.

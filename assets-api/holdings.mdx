@@ -1,0 +1,215 @@
+---
+title: Holdings
+description: Every balance an address holds, with spendable amounts and the account's XLM reserve.
+---
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+Holdings lists everything one address holds: XLM, trustlines, liquidity pool
+shares, and SAC and custom-token balances held in contract storage, including
+archived ones. Use it for a wallet portfolio or to check what an address can
+spend right now.
+
+<TestnetSetup />
+
+The sample `ACCOUNT` holds only XLM, so this page uses a Testnet DEX trader with
+three trustlines and open offers:
+
+<CodeGroup>
+
+```bash curl
+export TRADER='GBPAFJ3COSPSNDXZIPD36553DTM72W3R5WF2JU2L5SBGOLNR42ZORDTV'
+
+curl --fail-with-body "$ASSETS_URL/accounts/$TRADER/holdings" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY"
+```
+
+```js JavaScript
+const TRADER = 'GBPAFJ3COSPSNDXZIPD36553DTM72W3R5WF2JU2L5SBGOLNR42ZORDTV';
+const res = await fetch(`${process.env.ASSETS_URL}/accounts/${TRADER}/holdings`, {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+const page = await res.json();
+for (const r of page._embedded.records) console.log(r.asset, r.balance, r.spendable);
+// account is null for an unfunded address; records is then empty.
+console.log('spendable XLM', page.account?.spendable ?? '0');
+```
+
+```python Python
+import os, requests
+
+TRADER = "GBPAFJ3COSPSNDXZIPD36553DTM72W3R5WF2JU2L5SBGOLNR42ZORDTV"
+res = requests.get(
+    f"{os.environ['ASSETS_URL']}/accounts/{TRADER}/holdings",
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    timeout=30,
+)
+res.raise_for_status()
+page = res.json()
+for r in page["_embedded"]["records"]:
+    print(r["asset"], r["balance"], r["spendable"])
+# account is None for an unfunded address; records is then empty.
+print("spendable XLM", (page["account"] or {}).get("spendable", "0"))
+```
+
+</CodeGroup>
+
+Trimmed live response (2 of 4 records):
+
+```json
+{
+  "_embedded": {
+    "records": [
+      {
+        "asset": "USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+        "asset_type": "credit_alphanum4", "kind": "trustline",
+        "contract_id": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+        "code": "USDC", "issuer": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+        "name": null, "symbol": null, "decimals": 7,
+        "balance": "54816.0682815", "balance_raw": "548160682815",
+        "source": "ledger_entry", "verified": true, "archived": false,
+        "live_until_ledger": null,
+        "authorized": true, "maintain_liabilities": false, "clawback": false,
+        "limit": "922337203685.4775807",
+        "buying_liabilities": "20000.0000000", "selling_liabilities": "49309.8065500",
+        "spendable": "5506.2617315",
+        "last_modified_ledger": 5330921, "flags": ["auth_revocable"]
+      },
+      {
+        "asset": "native", "asset_type": "native", "kind": "native",
+        "contract_id": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+        "code": "XLM", "issuer": null, "name": "Lumens", "symbol": "XLM", "decimals": 7,
+        "balance": "7999.8354502", "balance_raw": "79998354502",
+        "source": "ledger_entry", "verified": true, "archived": false,
+        "live_until_ledger": null,
+        "authorized": null, "maintain_liabilities": null, "clawback": null, "limit": null,
+        "buying_liabilities": "0.0000000", "selling_liabilities": "0.0000000",
+        "spendable": "7995.3354502",
+        "last_modified_ledger": 5330921, "flags": []
+      }
+    ]
+  },
+  "account": {
+    "id": "GBPAFJ3COSPSNDXZIPD36553DTM72W3R5WF2JU2L5SBGOLNR42ZORDTV",
+    "balance": "7999.8354502", "spendable": "7995.3354502",
+    "minimum_balance": "4.5000000", "base_reserve": "0.5000000",
+    "subentries": 7, "sponsoring": 0, "sponsored": 0,
+    "buying_liabilities": "0.0000000", "selling_liabilities": "0.0000000",
+    "flags": 0, "home_domain": "", "sequence": "166387033057378",
+    "last_modified_ledger": 5330921
+  },
+  "address": "GBPAFJ3COSPSNDXZIPD36553DTM72W3R5WF2JU2L5SBGOLNR42ZORDTV",
+  "completeness": {"complete": true, "verified": 4, "unverified": 0, "unverified_contracts": []},
+  "read_view": {"network": "testnet", "as_of_ledger": 5331463, "bootstrap_ledger": 5253887}
+}
+```
+
+## Ordering
+
+Records are sorted by asset ID in byte order (uppercase codes before `native`,
+so `CETES:...`, `USDC:...`, then `native`). Follow `_links.next.href` for the
+next page; it is absent on the last page.
+
+## Record fields
+
+| Field | Meaning |
+| --- | --- |
+| `asset`, `asset_type` | Asset ID (`native`, `CODE:ISSUER`, `C...` or `pool:...`) and its type |
+| `kind` | `native`, `trustline`, `pool_share` or `contract` (a balance in contract storage) |
+| `contract_id` | The SAC of a classic asset, or the token contract |
+| `code`, `issuer`, `name`, `symbol`, `decimals` | Token identity and metadata |
+| `balance`, `balance_raw` | Decimal string and exact integer string |
+| `source`, `verified` | How the balance was read; see [accuracy](/assets-api/accuracy) |
+| `archived`, `live_until_ledger` | The contract entry is in the hot archive (still owned, never shown as zero), and the ledger its storage lives until |
+| `authorized`, `maintain_liabilities`, `clawback` | Trustline or SAC flags. `maintain_liabilities` is the raw `AUTHORIZED_TO_MAINTAIN_LIABILITIES` bit, so a fully authorized trustline reads `authorized: true, maintain_liabilities: false` |
+| `limit`, `buying_liabilities`, `selling_liabilities` | Trustline limit and liabilities from open offers |
+| `spendable` | What can be sent now (see below) |
+| `last_modified_ledger` | Ledger that last changed this entry |
+| `flags` | Registry flags of the token, such as `auth_revocable`, `unverified_token`, `impersonation_risk` or `likely_spam` ([registry](/assets-api/registry#flags)) |
+| `paging_token` | Opaque cursor of this record. Follow `_links.next.href` instead of building URLs from it |
+
+### Null rules
+
+A field in the table that does not apply to the record is `null`. Fields
+outside the table appear only when they apply: `closed_ledger` and
+`last_balance` on records (with `include=closed`), and `muxed_input` on the
+response when you asked with a muxed `M...` address.
+
+- XLM has `issuer`, `limit`, `authorized`, `maintain_liabilities` and
+  `clawback` set to `null`.
+- Contract balances and pool shares have `limit`, the liabilities and
+  `spendable` set to `null`.
+- `live_until_ledger` is set only for contract storage entries.
+- `decimals` is `null` for a contract token with unknown decimals; `balance` is
+  then in raw units, equal to `balance_raw`.
+- `name` and `symbol` are `null` when the token has no metadata (classic assets
+  usually have none).
+
+### Spendable
+
+- **XLM:** `balance` minus `minimum_balance` minus `selling_liabilities`.
+- **Trustline:** `balance` minus `selling_liabilities`, or `0` when the trustline
+  is not authorized.
+- In the example, 49,309.81 USDC is locked in offers, so only 5,506.26 is
+  spendable.
+
+## Account block
+
+For a `G...` address the response adds `account`, the account entry itself.
+For a `C...` address it is absent. For a valid `G...` address that does not
+exist on the network (never funded, or merged), the response is `200` with
+`"account": null` and no records, so check it before reading
+`account.spendable`.
+
+| Field | Meaning |
+| --- | --- |
+| `id`, `sequence` | Account ID and its sequence number (string) |
+| `balance`, `spendable` | XLM balance, and XLM that can be sent now |
+| `minimum_balance`, `base_reserve` | Reserve the account must keep: `(2 + subentries + sponsoring - sponsored) * base_reserve` |
+| `subentries`, `sponsoring`, `sponsored` | Counts that set the reserve |
+| `buying_liabilities`, `selling_liabilities` | XLM liabilities from open offers |
+| `flags`, `home_domain` | Account flags bitmask and home domain (`""` when unset) |
+| `last_modified_ledger` | Ledger that last changed the account |
+
+## Parameters
+
+| Parameter | Default | Rules |
+| --- | --- | --- |
+| `kind` | all | Comma list of `native`, `trustline`, `pool_share`, `contract`; other values return `400` |
+| `asset` | all | One asset ID |
+| `min_balance` | none | Leave out balances below this decimal |
+| `include` | none | Comma list: `zero` (zero-balance trustlines), `closed` (previously held, with `closed_ledger` and `last_balance`), `unverified` (custom tokens with an unrecognized layout, simulated, see [accuracy](/assets-api/accuracy)) |
+| `as_of_ledger` | current | Holdings at a past ledger; see [snapshots](/assets-api/snapshots). Not with `include=closed` |
+| `limit` | 50 | Values above 200 are lowered to 200 |
+| `cursor` | none | From `_links.next.href` |
+
+Holdings is allowed for [publishable keys](/guides/browser-keys) (without
+`as_of_ledger`), so a wallet page can call it from the browser.
+
+## Credits
+
+On Mainnet: 1 credit per started 100 records, so a 4-record page costs 1
+credit. With `as_of_ledger` the read costs 5 per 100 records, and each
+unverified token simulated with `include=unverified` adds 1. Testnet requests
+cost 0 credits and count toward the daily Testnet cap of 10,000 requests.
+
+## Errors
+
+| Status | `code` | What to do |
+| --- | --- | --- |
+| `400` | `invalid_request` | Fix the address, parameter or cursor |
+| `401` | `unauthorized` | Check the key and that it matches the host's network |
+| `402` | `payment_required` | Mainnet credits are used up; upgrade or wait for the monthly reset |
+| `429` | `rate_limited` | Wait `Retry-After`. Over the daily Testnet cap it counts down to 00:00 UTC |
+| `403` | `forbidden` | A publishable key used `as_of_ledger` or a disallowed Origin |
+| `409`, `501` | `history_unavailable`, `not_implemented` | Only with `as_of_ledger`; see [snapshots](/assets-api/snapshots) |
+| `503` | `busy`, `index_not_ready`, `query_timeout` | Retry after `Retry-After`; for `query_timeout` lower `limit` first, never repeat it unchanged |
+
+See [errors](/guides/errors) for the body and retry rules.
+
+## Next
+
+- [Claims, offers, allowances](/assets-api/account-state): what locks the liabilities.
+- [Token registry](/assets-api/registry): metadata and flags to show beside a balance.
+- [Balance webhooks](/webhooks/balance-events): get pushed when a holding changes.

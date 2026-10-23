@@ -1,0 +1,226 @@
+---
+title: Activity API
+sidebarTitle: Overview
+description: Query decoded Stellar activity by account, asset, contract or transaction.
+---
+
+The Activity API returns the decoded history of any Stellar account, asset,
+contract or transaction as JSON events: token movements, fees and Soroban
+contract events. History is complete from the first ledger, so you can query
+any address without registering it first.
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+<TestnetSetup />
+
+## Your first request
+
+Fetch the two newest events of an account:
+
+<CodeGroup>
+
+```bash curl
+curl --fail-with-body -G "$ACTIVITY_URL/accounts/$ACCOUNT/activity" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode 'limit=2'
+```
+
+```javascript JavaScript
+// Node 18+. Save as activity.mjs (for top-level await) and run: node activity.mjs
+const url = new URL(`/accounts/${process.env.ACCOUNT}/activity`, process.env.ACTIVITY_URL);
+url.searchParams.set('limit', '2');
+
+const response = await fetch(url, {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+const page = await response.json();
+if (!response.ok) throw new Error(`${page.code}: ${page.error}`);
+for (const event of page._embedded.records) {
+  console.log(event.ledger, event.type, event.amount, event.asset);
+}
+```
+
+```python Python
+import os
+import requests
+
+response = requests.get(
+    f"{os.environ['ACTIVITY_URL']}/accounts/{os.environ['ACCOUNT']}/activity",
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    params={"limit": 2},
+    timeout=60,
+)
+response.raise_for_status()
+for event in response.json()["_embedded"]["records"]:
+    print(event["ledger"], event["type"], event.get("amount"), event.get("asset"))
+```
+
+</CodeGroup>
+
+The response is one page: the records, the page size used, links to the next
+and previous pages, and a `read_view` that fixes the snapshot for the whole
+walk. Trimmed to one record:
+
+```json
+{
+  "read_view": {
+    "network": "testnet",
+    "generation": "testnet-2025-12-18-v3",
+    "decoder_version": "activity-v6-sdk-0.7.3-protocol-29",
+    "first_ledger": 3,
+    "snapshot_ledger": 5331461,
+    "published_through": 5331461
+  },
+  "range_complete": false,
+  "limit": 2,
+  "_links": {
+    "self": { "href": "/accounts/GAIH3ULL.../activity?generation=testnet-2025-12-18-v3&limit=2&order=desc&snapshot_ledger=5331461" },
+    "next": { "href": "/accounts/GAIH3ULL.../activity?cursor=0022898450634911745-0000000000&generation=testnet-2025-12-18-v3&limit=2&order=desc&snapshot_ledger=5331461" },
+    "prev": { "href": "/accounts/GAIH3ULL.../activity?cursor=0022898450634924033-0000000000&generation=testnet-2025-12-18-v3&limit=2&order=asc&snapshot_ledger=5331461" }
+  },
+  "_embedded": {
+    "records": [
+      {
+        "id": "testnet:5331461:28",
+        "kind": "token_transfer",
+        "type": "transfer",
+        "network": "testnet",
+        "ledger": 5331461,
+        "closed_at": "2026-10-22T14:54:52Z",
+        "tx_hash": "3c09c691d72fa10eff40a1e8c37021346024d9d7e74bc46affed55dcd87e485b",
+        "tx_index": 6,
+        "operation_index": 1,
+        "asset": "native",
+        "contract_address": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+        "from": "GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR",
+        "to": "GDVVJU43XF2QOC4CEFY6NWBI6J62OESUNHJKG3ED4ZRVOLOM3X56WYEP",
+        "amount": "10000.0000000",
+        "amount_raw": "100000000000",
+        "paging_token": "0022898450634924033-0000000000"
+      }
+    ]
+  }
+}
+```
+
+[Events](/activity/events) describes the record fields and
+[pagination](/activity/pagination) describes the page fields.
+
+## Routes
+
+| Route | Returns | Default order | Max `limit` | Ledger window | Credit weight |
+| --- | --- | --- | --- | --- | --- |
+| `/accounts/{id}/activity` | Token movements and fees of an account | `desc` | 1000 | Optional | 1 |
+| `/accounts/{id}/contract-events` | [Contract events](/activity/contract-events) that name the address in topic 1, 2 or 3 | `desc` | 1000 | Optional | 1 |
+| `/contracts/{id}/activity?topic1={address}` | One contract's events that name the address in that topic (also `topic2`, `topic3`) | `desc` | 1000 | Optional | 1 |
+| `/contracts/{id}/activity` | Every event of a contract | `desc` | 200 | **Required** | 5 |
+| `/assets/{asset}/activity` | Every movement of an asset | `desc` | 200 | **Required** | 5 |
+| `/activity` | The network feed: every event | `desc` | 200 | **Required** | 10 |
+| `/transactions/{hash}/activity` | The events of one transaction | `asc` | 200 | Optional | 1 |
+| `/transactions/{hash}` | The transaction header (not paged) | | | | 1 |
+
+**Required** means the request needs `since_ledger` or a `cursor`; without one
+it returns `400`. For example, asset activity from a recent ledger:
+
+```bash
+curl --fail-with-body -G "$ACTIVITY_URL/assets/$ASSET/activity" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode 'since_ledger=5330000' \
+  --data-urlencode 'limit=10'
+```
+
+The account route has no asset or event-type filter. Filter those fields in
+your code, or use the asset route.
+
+## Query parameters
+
+| Parameter | Default | Rules |
+| --- | --- | --- |
+| `order` | Per route (see above) | `asc` or `desc`. |
+| `limit` | 10 | An integer of 1 or more. Values above the route maximum are clamped; the response's `limit` shows the size used. |
+| `cursor` | | A `paging_token`. Prefer following `_links.next`. |
+| `since_ledger` | First ledger of history | Inclusive start ledger. |
+| `until_ledger` | The snapshot | Exclusive end ledger. Requires `since_ledger` and must be greater than it. |
+| `generation`, `snapshot_ledger` | The current snapshot | Pin a snapshot. Send both or neither. |
+| `direction` | Both directions | Account route only: `in` or `out`. See [account filters](#account-filters). |
+| `include_fees` | `true` | Account route only: `false` drops fee events. |
+
+These return `400 invalid_request`: a `limit` below 1 or not a number,
+`until_ledger` without `since_ledger`, a `since_ledger` that is not below
+`until_ledger`, and an unknown or repeated parameter.
+
+A `since_ledger` beyond the newest published ledger is not an error: the page is
+empty and complete. There is no maximum range width. Each page scans for at most
+about 8 seconds, so a sparse range can return a short or empty page with
+`range_complete: false` and a `next` link that resumes where the scan stopped.
+Keep following `next`; see [pagination](/activity/pagination).
+
+## Account filters
+
+- `direction=in` keeps movements to the account. `direction=out` keeps
+  movements from it and the fees it paid.
+- `include_fees=false` drops fee events. `include_fees=true` is the default and
+  filters nothing.
+
+When you send `direction` or `include_fees=false`, rows where the account is
+only the emitting contract or the asset issuer are dropped too, so a filtered
+walk is not a complete history. Omit both for the complete history.
+
+## Selectors
+
+- Accounts: checksum-valid `G`, `M`, `C`, `B` or `L` StrKeys. A base `G` address
+  includes payments to its muxed (`M`) addresses; an `M` address returns only
+  the payments to that muxed ID.
+- Contracts: checksum-valid `C` StrKeys.
+- Assets: `native` or `CODE:ISSUER` with a checksum-valid `G` issuer.
+- Transactions: a 64-character hexadecimal hash.
+
+Account activity holds every `token_transfer` event (`transfer`, `mint`, `burn`,
+`clawback`, `fee`) the account takes part in. A custom contract's
+`contract_event` is filed under the contract that emitted it; find the ones that
+name an address with [contract events by address](/activity/contract-events).
+[Token classification](/activity/tokens) explains which events count as token
+movements.
+
+## Transactions
+
+`GET /transactions/{hash}` returns the indexed header: ledger, time
+(`created_at`), success, fee charged, operation count and memo. It has no
+envelope, result or meta XDR. For the envelope, call RPC
+[`getTransaction`](/rpc/methods), which keeps about 7 days of history.
+
+```bash
+curl --fail-with-body "$ACTIVITY_URL/transactions/$TX_HASH" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY"
+```
+
+An unknown hash returns `404` with code `not_found` on both transaction routes.
+The lookup searched real history, so it costs the route's minimum credit.
+
+## Credits
+
+Testnet requests are free: they cost 0 credits and count toward your
+organization's daily Testnet cap of 10,000 requests, which resets at 00:00 UTC.
+
+On Mainnet, a page costs its route weight for every started 100 records (an
+empty page counts as one block), or one credit per started 64 KiB of response
+if that is more. A 1000-record account page costs 10 credits; a 200-record feed
+page costs 20. Errors cost nothing, except the unknown-hash `404` above. See
+[credits](/guides/limits#credits) and [rate limits](/guides/rate-limits).
+
+## Errors
+
+| Status | `code` | What to do |
+| --- | --- | --- |
+| 400 | `invalid_request` | Fix the parameter named in `error`. |
+| 402 | `payment_required` | Mainnet on the Free plan: the monthly credits are used up. Upgrade, or wait for the next period. |
+| 404 | `not_found` | Unknown transaction hash or route. |
+| 409 | `generation_changed` | The pinned snapshot belongs to an earlier generation (a Testnet reset). Start a new walk. |
+| 429 | `rate_limited` | Over the per-minute rate: wait `Retry-After` seconds. Over the daily Testnet cap, `Retry-After` counts down to 00:00 UTC. |
+| 503 | `busy`, `index_not_ready`, `unavailable` | Retry the same URL after `Retry-After`, a few times at most. |
+| 503 | `query_timeout` | Narrow `since_ledger`/`until_ledger` or lower `limit`. Do not repeat it unchanged. |
+
+All codes are in [errors](/guides/errors).
+
+This API returns [decoded events](/activity/events), not every Horizon
+operation. Use [RPC](/rpc/overview) for current state, simulation and submission.

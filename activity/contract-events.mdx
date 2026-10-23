@@ -1,0 +1,165 @@
+---
+title: Contract events by address
+description: Find Soroban contract events whose topics name an account or contract.
+---
+
+[Account activity](/activity/overview) lists the token movements and fees an
+address took part in. Many applications also emit their own contract events that
+name a user in a topic: a token `approve` from an owner, a router `deposit` or
+`swap` for a trader, a confidential token `register` for a holder. Those events
+are filed under the emitting contract, so account activity does not return them.
+The contract-event topic index finds them by address, across all of history.
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+<TestnetSetup />
+
+## Find events that name an address
+
+Every `approve` event that names `$ACCOUNT` in topic 1, 2 or 3, in any contract:
+
+<CodeGroup>
+
+```bash curl
+curl --fail-with-body -G "$ACTIVITY_URL/accounts/$ACCOUNT/contract-events" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode 'name=approve' \
+  --data-urlencode 'limit=100'
+```
+
+```javascript JavaScript
+const url = new URL(`/accounts/${process.env.ACCOUNT}/contract-events`, process.env.ACTIVITY_URL);
+url.searchParams.set('name', 'approve');
+url.searchParams.set('limit', '100');
+
+const response = await fetch(url, {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+const page = await response.json();
+if (!response.ok) throw new Error(`${page.code}: ${page.error}`);
+for (const event of page._embedded.records) {
+  console.log(event.ledger, event.contract_address, event.type, event.topics);
+}
+```
+
+```python Python
+import os
+import requests
+
+response = requests.get(
+    f"{os.environ['ACTIVITY_URL']}/accounts/{os.environ['ACCOUNT']}/contract-events",
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    params={"name": "approve", "limit": 100},
+    timeout=60,
+)
+response.raise_for_status()
+for event in response.json()["_embedded"]["records"]:
+    print(event["ledger"], event["contract_address"], event["type"], event["topics"])
+```
+
+</CodeGroup>
+
+Trimmed response (one record; the full record is on [events](/activity/events)):
+
+```json
+{
+  "range_complete": true,
+  "limit": 100,
+  "_embedded": {
+    "records": [
+      {
+        "id": "testnet:2650391:ce:9:0:0",
+        "kind": "contract_event",
+        "type": "approve",
+        "ledger": 2650391,
+        "tx_hash": "8c7f3bc80381cf504285ee4fc17a4ab20fb94c8f8f6ed3688124e3e82ec021c0",
+        "contract_address": "CCUX7JEJBAUCTFWXY5LQ4FOVIXF2ZWBTPXXZQN5CTGMJ7A2LUHYU22MY",
+        "topics": [
+          "approve",
+          "CAT6HNJZ6ODHXRA77FKDVPAG3RX4B6I362SU4K4DDCRN6J7TDY75OZSI",
+          "GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR"
+        ],
+        "data": ["50000000", 2667669],
+        "paging_token": "0011383342666649601-0000000000",
+        "rpc_event_id": "0011383342666649600-0000000000"
+      }
+    ]
+  }
+}
+```
+
+## Search one contract
+
+To search a single contract, add `topic1`, `topic2` or `topic3` to contract
+activity. Here `$ACCOUNT` is the spender, topic 2 of the token's `approve`
+events:
+
+```bash
+export TOKEN='CCUX7JEJBAUCTFWXY5LQ4FOVIXF2ZWBTPXXZQN5CTGMJ7A2LUHYU22MY'
+
+curl --fail-with-body -G "$ACTIVITY_URL/contracts/$TOKEN/activity" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode "topic2=$ACCOUNT" \
+  --data-urlencode 'limit=100'
+```
+
+With a `topicN`, contract activity needs no ledger window. Without one, it is
+plain contract activity and still requires `since_ledger` or a `cursor`.
+
+## Parameters
+
+| Parameter | Routes | Rules |
+| --- | --- | --- |
+| `name` | both | Exact event name, the record's `type` (for example `approve`), 1 to 64 bytes. If topic 0 is not a Symbol, the name is `event`. |
+| `contract` | `/accounts/{id}/contract-events` | Only events emitted by this `C...` contract. |
+| `position` | `/accounts/{id}/contract-events` | Only events with the address at topic `1`, `2` or `3`. |
+| `topic1`, `topic2`, `topic3` | `/contracts/{id}/activity` | The address at that topic. Send exactly one per request. |
+| `order`, `limit`, `cursor`, `since_ledger`, `until_ledger`, `generation`, `snapshot_ledger` | both | As on every [Activity route](/activity/overview#query-parameters). |
+
+Both routes default to `desc`, accept `limit` up to **1000** (default 10) and
+return the standard [snapshot-bound page](/activity/pagination). Each record is
+the unchanged [event body](/activity/events) with `paging_token` and
+`rpc_event_id`. These return `400`: two `topicN` parameters, a `position` other
+than 1 to 3, `name` on contract activity without a `topicN`, and `direction` or
+`include_fees` (account-activity filters).
+
+## Credits
+
+On Mainnet both routes cost 1 credit per started 100 records, like account
+activity, so a full 1000-record page costs 10 credits. Testnet requests cost 0
+credits and count toward the daily Testnet cap of 10,000 requests. See
+[credits](/guides/limits#credits).
+
+## What is indexed
+
+Only top-level topics 1 to 3 are indexed; topic 0 is the event name. Values
+inside `data`, and addresses nested in a topic vector or map, are not searched.
+Matching uses the exact `topics_xdr`, not the rendered JSON. Account (`G`),
+contract (`C`), claimable balance (`B`) and liquidity pool (`L`) addresses match
+by StrKey. A muxed (`M`) address in a topic matches both its `M` address and its
+base `G` account. An event that names the address in two positions appears once.
+
+## Coverage and errors
+
+The topic index covers history from ledger 3 to the published snapshot on both
+networks.
+
+| Status | `code` | Meaning | What to do |
+| --- | --- | --- | --- |
+| 400 | `invalid_request` | A parameter rule above. | Fix the request. |
+| 503 | `topic_coverage` | The range reaches outside the covered ledgers (`Retry-After: 60`). The message states the covered range. A result is never silently partial. | Pass a `since_ledger` inside the range, or retry later. |
+| 404 | `topic_search_disabled` | Topic search is not available on this host. Plain contract activity still works. | Use plain contract activity. |
+
+See [errors](/guides/errors) for `busy`, `query_timeout` and the other shared codes.
+
+## Compared with RPC event queries
+
+Stellar RPC `getEvents` keeps a short retention window, and an indexer that
+scans ledger ranges needs many sequential scans to find one address across
+years of history. The topic index is keyed by address: one request returns the
+next page of matching events from any point in history.
+
+Each `contract_event` record carries `rpc_event_id`, the RPC event `id` of the
+same event. You can also match on `tx_hash`, `ledger`, `contract_address` and the
+exact `topics_xdr`/`data_xdr`, which an RPC event object carries as `txHash`,
+`ledger`, `contractId`, `topic` and `value`.

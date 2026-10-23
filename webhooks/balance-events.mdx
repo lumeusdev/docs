@@ -1,0 +1,136 @@
+---
+title: Balance events
+description: Receive the new balance of a holder after every ledger that changes it.
+---
+
+A `balance.changed` event carries the absolute balance of one holder for one
+asset after a ledger closes. Use it to keep a wallet or ledger view current
+without summing transfers, and to keep an [Assets API](/assets-api/overview)
+snapshot up to date.
+
+Balance events are opt-in. A subscription receives them only when its
+`event_types` lists `balance.changed` or `balance.changed.fees`. Subscriptions
+with an empty `event_types` list receive decoded events only.
+
+## Subscribe
+
+```bash
+# Your Testnet webhook key, the account to watch and your public HTTPS receiver
+export LUMEUS_WEBHOOK_KEY='paste-your-whk_-key'
+export WEBHOOKS_URL='https://webhooks-testnet.lumeus.dev'
+export ACCOUNT='GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR'
+export RECEIVER_URL='https://hooks.example.com/lumeus'
+```
+
+{/* not-run: creates a webhook subscription */}
+```bash
+curl --fail-with-body -sS "$WEBHOOKS_URL/v1/subscriptions" \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" \
+  -H "Idempotency-Key: $(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)" \
+  -H 'Content-Type: application/json' \
+  --data "$(jq -n --arg target "$RECEIVER_URL" --arg account "$ACCOUNT" \
+    '{name:"wallet-balances",target_url:$target,account:$account,event_types:["balance.changed"]}')"
+```
+
+The response is the new subscription with its one-time `hmac_secret`, as in
+[Your first webhook](/webhooks/quickstart). Selectors
+apply to balance events as follows:
+
+| Selector | Matches |
+| --- | --- |
+| `account` | `holder` (a `G...` or `C...` address) |
+| `asset` | `asset`: `native`, `CODE:ISSUER`, a `C...` token contract or `pool:<64 hex>`. A Stellar Asset Contract (SAC) address also selects its classic asset |
+| `contract_addr` | `contract_address` |
+| `event_types` | `balance.changed`, or `balance.changed.fees` to also receive XLM changes caused only by fees |
+
+You can list balance and decoded event types in one subscription, for example
+`["transfer", "balance.changed"]`.
+
+## Payload
+
+```json Payload (example values)
+{
+  "id": "testnet:5294900:b:GAIGKM2WWDVEB4OCV3Q4YICODYWTWFZ5CDOWG7I7Y5HJW7VVFQ7BSUCL:native",
+  "kind": "balance",
+  "type": "balance.changed",
+  "network": "testnet",
+  "ledger": 5294900,
+  "closed_at": "2026-10-20T12:08:07Z",
+  "holder": "GAIGKM2WWDVEB4OCV3Q4YICODYWTWFZ5CDOWG7I7Y5HJW7VVFQ7BSUCL",
+  "asset": "native",
+  "contract_address": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+  "balance": "10000.0000000",
+  "balance_raw": "100000000000",
+  "previous_balance_raw": "0",
+  "decimals": 7,
+  "source": "ledger_entry",
+  "archived": false,
+  "deleted": false
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id` | `<network>:<ledger>:b:<holder>:<asset>`. Deduplicate on it, as for other events |
+| `kind`, `type` | `balance`, `balance.changed` |
+| `holder` | Account or contract that holds the balance |
+| `asset` | `native`, `CODE:ISSUER`, a `C...` contract token, or `pool:<hex>` for a liquidity-pool share. A SAC address is never used as `asset` |
+| `contract_address` | The SAC for native and classic assets, the token contract for contract tokens, absent for pool shares |
+| `balance`, `balance_raw` | New balance after the ledger, as a decimal string and as the raw integer. `balance` is omitted when `decimals` is unknown |
+| `previous_balance_raw` | Balance before the ledger (`0` when the balance did not exist) |
+| `decimals` | 7 for native, classic, SAC and pool shares; the token's decimals for contract tokens. Omitted, together with `balance`, when the Assets registry has no decimals for the token; use `balance_raw` |
+| `source` | `ledger_entry` (accounts, trustlines, SAC balances) or `token_storage` (contract token storage) |
+| `archived` | The contract balance entry was evicted to the archive. Its value is unchanged until it is restored |
+| `deleted` | The trustline or balance entry was removed. `balance` is `0` |
+
+Amounts are strings. Parse them as exact integers or decimals, never as
+floating-point numbers.
+
+## Semantics
+
+- **One event per holder, asset and ledger.** Several changes inside one
+  ledger are coalesced. The event carries the value after the ledger, not a
+  running sum.
+- **Fees.** An XLM change caused only by a transaction fee (or its refund) is
+  suppressed unless the subscription lists `balance.changed.fees`. That option
+  includes all `balance.changed` events as well.
+- **Contract tokens.** Custom SEP-41 tokens are included when the Assets
+  registry recognizes their balance storage layout. Native XLM, classic
+  assets, SAC balances and pool shares are always included. If the registry
+  is temporarily unavailable, delivery continues for those and custom tokens
+  resume once it is reachable again.
+- **Delivery.** Balance events use the same signing, retries, ordering and
+  credits as other deliveries, and the same `(network, id)`
+  [deduplication](/webhooks/receive#deduplicate). They exist only in Webhooks;
+  the Activity API has no balance events, so after a gap re-read holdings
+  instead (below).
+
+## Stitch with an Assets snapshot
+
+Because each event carries an absolute balance, you can start from any
+[holdings](/assets-api/holdings) snapshot without a replay:
+
+1. Create the subscription and read its `activation_checkpoint` C.
+2. Read holdings from the Assets API. Its `read_view.as_of_ledger` is N.
+   Use a snapshot with N >= C.
+3. Apply only events with `ledger > N`, keyed by (`holder`, `asset`). Ignore
+   events with `ledger <= N`; the snapshot already contains them.
+4. Keep the event with the highest `ledger` for each (`holder`, `asset`).
+   An older event must never overwrite a newer one, even if it arrives later.
+
+A duplicate event is harmless: it carries the same balance. A missed event
+does not corrupt anything, but the balance stays stale until the next change
+for that holder and asset. If the subscription reports a
+[coverage gap](/webhooks/recovery), read holdings again at a ledger at or
+after the gap's `last_ledger` and continue from step 3.
+
+## Limits
+
+One subscription can admit at most 4,096 events per ledger. Filter balance
+subscriptions by `account` or `asset`: a broad selector, such as `native`
+without an account or a subscription with no account or asset at all, can
+match thousands of holders in one busy ledger. When a ledger exceeds the
+limit, that subscription records a coverage gap for the ledger with reason
+`payload_or_policy_limit`. The subscription stays active and later ledgers are delivered
+normally. Narrow the selector,
+or repair the gap with a new snapshot.

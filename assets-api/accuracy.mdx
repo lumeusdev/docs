@@ -1,0 +1,96 @@
+---
+title: Accuracy and completeness
+description: How each balance is determined, and how to tell when a holdings answer is complete.
+---
+
+Every Assets answer is read from ledger state at `read_view.as_of_ledger`. Each
+record says how its balance was determined (`source`, `verified`), and each
+holdings response says in `completeness` whether the whole answer is verified.
+Read this page before you show balances as authoritative, for example in a
+wallet or an audit.
+
+## Sources
+
+| `source` | How the balance was determined | `verified` |
+| --- | --- | --- |
+| `ledger_entry` | Read from the protocol entry: account, trustline, pool share, claimable balance or SAC balance | `true` |
+| `token_storage` | A custom token's contract storage, decoded with a recognized SEP-41 layout | `true` when the token is classified SEP-41 and its layout is recognized |
+| `simulation` | The token's `balance()` function simulated at `as_of_ledger` (only with `include=unverified`) | `false` |
+
+- **Exact:** XLM, trustlines, pool shares, claimable balances, offers, and SAC
+  balances of contract (`C...`) holders, live or archived. A `G...` account's
+  SAC balance is its trustline.
+- **Exact for the layout:** custom SEP-41 tokens that store balances in the
+  common `Balance(Address) -> i128` layout (`layout: balance_i128`).
+- **Not listed by default:** other custom tokens. They appear only with
+  `include=unverified`, flagged `unverified_token`.
+
+## Completeness block
+
+Every holdings response carries `completeness`. This live Mainnet answer holds
+one token with an unrecognized layout, so it is incomplete:
+
+```bash
+# A Mainnet key (lum_live_...) from app.lumeus.dev
+export LUMEUS_MAINNET_KEY='paste-your-lum_live_-key'
+
+curl --fail-with-body --get \
+  "https://assets.lumeus.dev/accounts/CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75/holdings" \
+  -H "Authorization: Bearer $LUMEUS_MAINNET_KEY" \
+  --data-urlencode 'limit=3'
+```
+
+```json
+{
+  "completeness": {
+    "complete": false,
+    "verified": 3,
+    "unverified": 1,
+    "simulated": 0,
+    "simulation_skipped": 1,
+    "unverified_contracts": ["CB6PIAMD6VPZEI7CMS4PMN6RL5LBTRNAO2ICB7SFXATKKIETOWFZILW3"],
+    "note": "some balances come from tokens whose storage layout is not verified; they are excluded, add include=unverified to list them"
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `complete` | `true` only when every holding is verified and no candidate token was left out |
+| `verified` | Verified non-zero holdings of the address, across all pages |
+| `unverified` | Unverified non-zero holdings plus candidate tokens the index could not decode |
+| `simulated`, `simulation_skipped` | Candidate tokens simulated in this response, and those not simulated |
+| `unverified_contracts` | The candidate token contracts; read them with `include=unverified` |
+| `note` | A human-readable summary |
+
+With `include=unverified` the same request simulates the candidate tokens (up to
+5 per request, 1 extra credit each) and lists those with a non-zero balance as
+`source: simulation`, `verified: false`.
+
+## Archived balances
+
+Contract storage that reaches the end of its lifetime moves to the **hot
+archive**, a store for expired contract entries. The holder still owns an
+archived balance, and the network restores it automatically the next time it is
+used. Archived balances keep `archived: true` and their amount; they are never
+shown as zero, and they count toward `holder_count` and `supply`.
+
+## What is not covered
+
+- Positions inside protocols (lending deposits, vault shares as value) are not
+  holdings.
+- NFT contracts (SEP-50) are excluded from fungible lists.
+- Balance history starts at `read_view.bootstrap_ledger`. Ledgers it cannot
+  answer exactly return `409`; use a [snapshot job](/assets-api/snapshots).
+
+## Consistency with Activity
+
+Holdings at `as_of_ledger` N plus Activity events from `since_ledger=N+1` give
+no gaps and no double counting for `ledger_entry` and `token_storage` balances.
+The two indexes publish independently, so Assets `as_of_ledger` can be a few
+ledgers ahead of Activity.
+
+## Next
+
+- [Holdings](/assets-api/holdings): the `include` parameter.
+- [Token registry](/assets-api/registry#flags): `unverified_token` and other flags.

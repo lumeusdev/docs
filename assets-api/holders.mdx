@@ -1,0 +1,197 @@
+---
+title: Token holders
+description: Ranked holders of a token, and one holder's balance and rank.
+---
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+Holders lists every address that holds a token, largest balance first, with the
+token's holder count and supply. Use it for a token's "top holders" table, for
+distribution analysis, or (with the rank route) to show a user where they stand.
+
+<TestnetSetup />
+
+<CodeGroup>
+
+```bash curl
+curl --fail-with-body --get "$ASSETS_URL/assets/$ASSET/holders" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode 'limit=100'
+```
+
+```js JavaScript
+const url = new URL(`${process.env.ASSETS_URL}/assets/${process.env.ASSET}/holders`);
+url.searchParams.set('limit', '100');
+const res = await fetch(url, {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+const page = await res.json();
+console.log(page.holder_count, 'holders, supply', page.supply);
+for (const h of page._embedded.records) console.log(h.holder, h.balance);
+```
+
+```python Python
+import os, requests
+
+res = requests.get(
+    f"{os.environ['ASSETS_URL']}/assets/{os.environ['ASSET']}/holders",
+    params={"limit": 100},
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    timeout=30,
+)
+res.raise_for_status()
+page = res.json()
+print(page["holder_count"], "holders, supply", page["supply"])
+for h in page["_embedded"]["records"]:
+    print(h["holder"], h["balance"])
+```
+
+</CodeGroup>
+
+Trimmed live response (first record of 55):
+
+```json
+{
+  "_embedded": {
+    "records": [
+      {
+        "holder": "CCSXXPCXICXOC2MLU3UINWYKL6M5VNLVOTHA4ZQ5S5BEDZGRWDTP52CG",
+        "asset": "BTC:GAGVZMODPYFTULIVSY3RGFADIC5LF4LLSN37N4MFWGNZ57TYBXL2LQQX",
+        "kind": "contract", "balance": "1342.8845961", "balance_raw": "13428845961",
+        "decimals": 7, "source": "ledger_entry", "verified": true,
+        "archived": false, "authorized": true, "last_modified_ledger": 5331443,
+        "paging_token": "WyIxMzQyODg0NTk2MSIsIkNDU1hYUENYSUNYT0MyTUxVM1VJTldZS0w2TTVWTkxWT1RIQTRaUTVTNUJFRFpHUldEVFA1MkNHIl0"
+      }
+    ]
+  },
+  "asset": "BTC:GAGVZMODPYFTULIVSY3RGFADIC5LF4LLSN37N4MFWGNZ57TYBXL2LQQX",
+  "holder_count": 55,
+  "supply": "2131.3861296",
+  "supply_source": "exact",
+  "decimals": 7,
+  "limit": 100,
+  "read_view": {"network": "testnet", "as_of_ledger": 5331463, "bootstrap_ledger": 5253887}
+}
+```
+
+Holders are sorted by balance, largest first, then by address. For a classic
+asset the list merges trustline (`G...`) holders and contract (`C...`) holders
+of its SAC; `kind` says which. The page header carries `holder_count` (holders
+with a non-zero balance), `supply` and `supply_source` (see
+[supply](/assets-api/registry#supply)). With `as_of_ledger`, `supply` is `null`. The asset ID may be URL-encoded
+(`BTC%3AG...`) or raw; both work.
+
+## Parameters
+
+| Parameter | Default | Rules |
+| --- | --- | --- |
+| `min_balance` | none | Leave out holders below this decimal |
+| `include` | none | `zero` also lists zero-balance trustlines |
+| `as_of_ledger` | current | Holders at a past ledger, for assets with at most 100,000 holders; see [snapshots](/assets-api/snapshots) |
+| `limit` | 50 | Values above 200 are lowered to 200 |
+| `cursor` | none | From `_links.next.href`. Deep pages are reached only through the cursor |
+
+Holders is a server-side route: [publishable keys](/guides/browser-keys) get
+`403`.
+
+## One holder's rank
+
+Rank answers "how large is this address among all holders?". The sample
+`ACCOUNT` does not hold `$ASSET`, so this example defines its largest holder:
+
+<CodeGroup>
+
+```bash curl
+export HOLDER='CCSXXPCXICXOC2MLU3UINWYKL6M5VNLVOTHA4ZQ5S5BEDZGRWDTP52CG'
+
+curl --fail-with-body "$ASSETS_URL/assets/$ASSET/holders/$HOLDER" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY"
+```
+
+```js JavaScript
+const HOLDER = 'CCSXXPCXICXOC2MLU3UINWYKL6M5VNLVOTHA4ZQ5S5BEDZGRWDTP52CG';
+const res = await fetch(
+  `${process.env.ASSETS_URL}/assets/${process.env.ASSET}/holders/${HOLDER}`,
+  { headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` } },
+);
+if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+const { rank, rank_exact, holder_count, record } = await res.json();
+console.log(record.balance, `rank ${rank} of ${holder_count}`, rank_exact ? 'exact' : 'approximate');
+```
+
+```python Python
+import os, requests
+
+HOLDER = "CCSXXPCXICXOC2MLU3UINWYKL6M5VNLVOTHA4ZQ5S5BEDZGRWDTP52CG"
+res = requests.get(
+    f"{os.environ['ASSETS_URL']}/assets/{os.environ['ASSET']}/holders/{HOLDER}",
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    timeout=30,
+)
+res.raise_for_status()
+body = res.json()
+print(body["record"]["balance"], f"rank {body['rank']} of {body['holder_count']}", "exact" if body["rank_exact"] else "approximate")
+```
+
+</CodeGroup>
+
+```json
+{
+  "record": {
+    "holder": "CCSXXPCXICXOC2MLU3UINWYKL6M5VNLVOTHA4ZQ5S5BEDZGRWDTP52CG",
+    "asset": "BTC:GAGVZMODPYFTULIVSY3RGFADIC5LF4LLSN37N4MFWGNZ57TYBXL2LQQX",
+    "kind": "contract", "balance": "1344.2235021", "balance_raw": "13442235021",
+    "source": "ledger_entry", "verified": true, "authorized": true
+  },
+  "rank": 1,
+  "rank_exact": true,
+  "holder_count": 55,
+  "read_view": {"network": "testnet", "as_of_ledger": 5331479}
+}
+```
+
+For XLM (4.3 million Testnet holders) the rank of `$ACCOUNT` comes from the
+periodic refresh:
+`{"rank": 2, "rank_exact": false, "rank_as_of": 5331295, "holder_count": 4339661}`.
+
+### Rank rules
+
+| Case | Answer |
+| --- | --- |
+| Asset with up to 100,000 holders | `200`, exact `rank` (1 is the largest), `rank_exact: true` |
+| Larger asset | `200`, `rank` from a periodic refresh, `rank_exact: false`, and `rank_as_of` (the ledger it was computed at) |
+| Larger asset whose rank is still being computed | `200` at once with `rank: null`, a `rank_note` and a `Retry-After` header (15 seconds). Not charged; retry after the header |
+| Address with a zero-balance trustline | `200` with `rank: null` and the zero-balance `record` |
+| Address with no trustline or balance entry for the asset | `404 not_found` |
+
+## Credits
+
+Testnet requests are free (they count toward the daily Testnet cap of 10,000).
+On Mainnet:
+
+| Request | Credits |
+| --- | --- |
+| Holders page | 5 per started 100 records (`limit=100` on a full page: 5) |
+| Holders with `as_of_ledger` | 5 per started 100 records |
+| One holder's rank | 2 (0 when `rank_note` is present) |
+
+## Errors
+
+| Status | `code` | What to do |
+| --- | --- | --- |
+| `400` | `invalid_request` | Fix the asset ID, address, parameter or cursor |
+| `401` | `unauthorized` | Check the key and the host's network |
+| `403` | `forbidden` | Use a secret key; publishable keys cannot read holders |
+| `404` | `not_found` | Unknown asset, or the address has no entry for it |
+| `409`, `501` | `history_unavailable`, `not_implemented` | Only with `as_of_ledger`; see [snapshots](/assets-api/snapshots) |
+| `429` | `rate_limited` | Wait `Retry-After`. Over the daily Testnet cap it counts down to 00:00 UTC |
+| `503` | `busy`, `index_not_ready`, `query_timeout` | Retry after `Retry-After`; for `query_timeout` lower `limit` first, never repeat it unchanged |
+
+See [errors](/guides/errors) for the body and retry rules.
+
+## Next
+
+- [Historical snapshots](/assets-api/snapshots): holders at a past ledger, or for an airdrop list.
+- [Token registry](/assets-api/registry): supply, flags and metadata of the token.
+- [Rate limits](/guides/rate-limits).

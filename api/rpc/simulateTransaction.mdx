@@ -1,0 +1,159 @@
+---
+title: "simulateTransaction"
+description: "Run a Soroban transaction without submitting it."
+openapi: "/api-reference/rpc/simulateTransaction.json POST /"
+---
+
+Runs a transaction against the current ledger without submitting it and returns its return value, footprint (`transactionData`), minimum resource fee, events and the authorization it needs. The transaction does not need to be signed and its sequence number is not checked. The example calls `balance` on the native XLM contract for the sample Testnet account; SDKs build this envelope for you (`prepareTransaction` in JavaScript).
+
+The examples call Testnet with your key in `LUMEUS_API_KEY`; the SDK tabs use `@stellar/stellar-sdk` and the Python `stellar-sdk` ([SDK setup and errors](/rpc/sdks)). On Mainnet, use `https://rpc.lumeus.dev` and a `lum_live_` key.
+
+<RequestExample>
+```bash cURL
+curl --fail-with-body -s https://rpc-testnet.lumeus.dev \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"simulateTransaction","params":{"transaction":"AAAAAgAAAAAQfdFrLDgzSIIugR73qs8U0ZiKbwBUclTTPh5thlbgnAAAAGQAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAGAAAAAAAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAAHYmFsYW5jZQAAAAABAAAAEgAAAAAAAAAAEH3Rayw4M0iCLoEe96rPFNGYim8AVHJU0z4ebYZW4JwAAAAAAAAAAAAAAAA="}}'
+```
+
+```javascript JavaScript
+// Node 18+. Save as rpc.mjs and run: node rpc.mjs
+const rpc = async (method, params) => {
+  const res = await fetch('https://rpc-testnet.lumeus.dev', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.LUMEUS_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  });
+  const body = await res.json();
+  if (body.error) throw new Error(`${body.error.data ?? body.error.code}: ${body.error.message}`);
+  return body.result;
+};
+
+console.log(JSON.stringify(await rpc('simulateTransaction', { transaction: 'AAAAAgAAAAAQfdFrLDgzSIIugR73qs8U0ZiKbwBUclTTPh5thlbgnAAAAGQAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAGAAAAAAAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAAHYmFsYW5jZQAAAAABAAAAEgAAAAAAAAAAEH3Rayw4M0iCLoEe96rPFNGYim8AVHJU0z4ebYZW4JwAAAAAAAAAAAAAAAA=' }), null, 2));
+```
+
+```python Python
+import json
+import os
+
+import requests
+
+
+def rpc(method, params=None):
+    body = {"jsonrpc": "2.0", "id": 1, "method": method}
+    if params is not None:
+        body["params"] = params
+    res = requests.post(
+        "https://rpc-testnet.lumeus.dev",
+        json=body,
+        headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+        timeout=30,
+    )
+    data = res.json()
+    if "error" in data:
+        raise RuntimeError(f"{data['error'].get('data')}: {data['error']['message']}")
+    return data["result"]
+
+
+print(json.dumps(rpc("simulateTransaction", {"transaction": "AAAAAgAAAAAQfdFrLDgzSIIugR73qs8U0ZiKbwBUclTTPh5thlbgnAAAAGQAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAGAAAAAAAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAAHYmFsYW5jZQAAAAABAAAAEgAAAAAAAAAAEH3Rayw4M0iCLoEe96rPFNGYim8AVHJU0z4ebYZW4JwAAAAAAAAAAAAAAAA="}), indent=2))
+```
+
+```javascript JavaScript SDK
+// npm install @stellar/stellar-sdk. Save as sdk.mjs and run: node sdk.mjs
+import { Networks, TransactionBuilder, rpc, scValToNative } from '@stellar/stellar-sdk';
+
+const server = new rpc.Server('https://rpc-testnet.lumeus.dev', {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+
+// An unsigned transaction that calls balance(GAIH…) on the native XLM contract.
+// Build your own with TransactionBuilder; see /rpc/transactions.
+const tx = TransactionBuilder.fromXDR(
+  'AAAAAgAAAAAQfdFrLDgzSIIugR73qs8U0ZiKbwBUclTTPh5thlbgnAAAAGQAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAGAAAAAAAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAAHYmFsYW5jZQAAAAABAAAAEgAAAAAAAAAAEH3Rayw4M0iCLoEe96rPFNGYim8AVHJU0z4ebYZW4JwAAAAAAAAAAAAAAAA=',
+  Networks.TESTNET,
+);
+const sim = await server.simulateTransaction(tx);
+if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
+console.log(JSON.stringify({
+  latestLedger: sim.latestLedger,
+  minResourceFee: sim.minResourceFee,
+  returnValue: scValToNative(sim.result.retval), // the i128 balance in stroops
+}, (k, v) => (typeof v === 'bigint' ? v.toString() : v), 2));
+```
+
+```python Python SDK
+# pip install stellar-sdk
+import os
+
+from stellar_sdk import Network, SorobanServer, TransactionEnvelope
+from stellar_sdk.client.requests_client import RequestsClient
+
+# num_retries=0: raise 429/503 at once instead of sleeping through Retry-After.
+server = SorobanServer(
+    "https://rpc-testnet.lumeus.dev",
+    client=RequestsClient(num_retries=0, custom_headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"}),
+)
+
+# An unsigned transaction that calls balance(GAIH…) on the native XLM contract.
+tx = TransactionEnvelope.from_xdr(
+    "AAAAAgAAAAAQfdFrLDgzSIIugR73qs8U0ZiKbwBUclTTPh5thlbgnAAAAGQAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAGAAAAAAAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAAHYmFsYW5jZQAAAAABAAAAEgAAAAAAAAAAEH3Rayw4M0iCLoEe96rPFNGYim8AVHJU0z4ebYZW4JwAAAAAAAAAAAAAAAA=",
+    Network.TESTNET_NETWORK_PASSPHRASE,
+)
+print(server.simulate_transaction(tx).model_dump_json(by_alias=True, indent=2))
+```
+</RequestExample>
+
+
+## Result
+
+The fields of `result` (stellar-rpc 29). Fields marked "Present only when it applies" can be absent.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `error` | string | Only when simulation failed: why. The other fields are then mostly absent. |
+| `transactionData` | string | SorobanTransactionData to set on the transaction. Base64 XDR (with xdrFormat json, the matching Json field instead). Present only when it applies. |
+| `transactionDataJson` | JSON | SorobanTransactionData. Decoded JSON; only with xdrFormat json. |
+| `events` | string[] | Base64 DiagnosticEvent XDR. Present only when it applies. |
+| `eventsJson` | JSON[] | Decoded diagnostic events; only with xdrFormat json. |
+| `minResourceFee` | string | Minimum resource fee in stroops, as a string. Present only when it applies. |
+| `results` | object[] | One result per host function call. Present only when it applies. |
+| `results[].auth` | string[] | Base64 SorobanAuthorizationEntry XDR the call needs. Present only when it applies. |
+| `results[].authJson` | JSON[] | Decoded authorization entries; only with xdrFormat json. |
+| `results[].xdr` | string | Base64 ScVal XDR return value. Present only when it applies. |
+| `results[].returnValueJson` | JSON | Return value. Decoded JSON; only with xdrFormat json. |
+| `restorePreamble` | object | Only when archived entries must be restored first: submit a RestoreFootprint transaction with this data. |
+| `restorePreamble.transactionData` | string | SorobanTransactionData of the restore. Base64 XDR (with xdrFormat json, the matching Json field instead). Present only when it applies. |
+| `restorePreamble.transactionDataJson` | JSON | SorobanTransactionData. Decoded JSON; only with xdrFormat json. |
+| `restorePreamble.minResourceFee` | string | Resource fee of the restore, as a string. |
+| `stateChanges` | object[] | How ledger entries would change. Present only when it applies. |
+| `stateChanges[].type` | string | One of `created`, `updated`, `deleted`. |
+| `stateChanges[].key` | string | Base64 LedgerKey XDR. Present only when it applies. |
+| `stateChanges[].keyJson` | JSON | LedgerKey. Decoded JSON; only with xdrFormat json. |
+| `stateChanges[].before` | string or null | Base64 LedgerEntry XDR before; null when created. |
+| `stateChanges[].beforeJson` | JSON | LedgerEntry before. Decoded JSON; only with xdrFormat json. |
+| `stateChanges[].after` | string or null | Base64 LedgerEntry XDR after; null when deleted. |
+| `stateChanges[].afterJson` | JSON | LedgerEntry after. Decoded JSON; only with xdrFormat json. |
+| `latestLedger` | integer | Ledger the simulation ran against. |
+
+## Parameters
+
+| Name | Type | Rules |
+| --- | --- | --- |
+| `transaction` | string | Required. Base64 TransactionEnvelope XDR with one InvokeHostFunction, ExtendFootprintTTL or RestoreFootprint operation. |
+| `resourceConfig.instructionLeeway` | integer | Extra CPU instructions to add to the estimate. |
+| `authMode` | string | `enforce`, `record` or `record_allow_nonroot`. |
+| `xdrFormat` | string | `base64` (default) or `json`. |
+
+## Credits and limits
+
+- **Mainnet:** 5 credits plus 1 credit per started 64 KiB of response, so a small answer costs 6 credits. A call that returns a JSON-RPC error costs nothing.
+- **Testnet:** free. Each call counts toward your organization's 10,000 Testnet requests a day; above that, calls get 429 `rate_limited` until 00:00 UTC.
+- Response ceiling 8 MiB. A simulation that returns `result.error` is still charged its 5 credits. Publishable keys cannot call it.
+- The plan RPC rate applies per call; each call in a batch counts as one.
+
+## Errors
+
+Gateway errors are JSON-RPC errors with the machine code in `error.data` and the request ID in `error.request_id`. Common ones: `-32602` (`invalid_request`, HTTP 400) for invalid params, `-32000` with `unauthorized` (401), `rate_limited` (429, wait `Retry-After` seconds) or `unavailable` (503). See [errors](/guides/errors).

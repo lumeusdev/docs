@@ -1,0 +1,156 @@
+---
+title: "getTransactions"
+description: "Read transactions in ledger order."
+openapi: "/api-reference/rpc/getTransactions.json POST /"
+---
+
+Returns a page of transactions from `startLedger` (or from a `cursor`) in ledger and application order, each with its status, hash and XDR. Pass the returned `cursor` to read the next page.
+
+The examples call Testnet with your key in `LUMEUS_API_KEY`; the SDK tabs use `@stellar/stellar-sdk` and the Python `stellar-sdk` ([SDK setup and errors](/rpc/sdks)) (the curl example uses `jq`). On Mainnet, use `https://rpc.lumeus.dev` and a `lum_live_` key.
+
+<RequestExample>
+```bash cURL
+LATEST=$(curl --fail-with-body -s https://rpc-testnet.lumeus.dev \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' | jq .result.latestLedger)
+
+curl --fail-with-body -s https://rpc-testnet.lumeus.dev \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc --argjson start $((LATEST - 10)) \
+    '{jsonrpc:"2.0",id:1,method:"getTransactions",params:{startLedger:$start,pagination:{limit:1}}}')"
+```
+
+```javascript JavaScript
+// Node 18+. Save as rpc.mjs and run: node rpc.mjs
+const rpc = async (method, params) => {
+  const res = await fetch('https://rpc-testnet.lumeus.dev', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.LUMEUS_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  });
+  const body = await res.json();
+  if (body.error) throw new Error(`${body.error.data ?? body.error.code}: ${body.error.message}`);
+  return body.result;
+};
+
+const { latestLedger } = await rpc('getHealth');
+console.log(JSON.stringify(await rpc('getTransactions', { startLedger: latestLedger - 10, pagination: { limit: 1 } }), null, 2));
+```
+
+```python Python
+import json
+import os
+
+import requests
+
+
+def rpc(method, params=None):
+    body = {"jsonrpc": "2.0", "id": 1, "method": method}
+    if params is not None:
+        body["params"] = params
+    res = requests.post(
+        "https://rpc-testnet.lumeus.dev",
+        json=body,
+        headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+        timeout=30,
+    )
+    data = res.json()
+    if "error" in data:
+        raise RuntimeError(f"{data['error'].get('data')}: {data['error']['message']}")
+    return data["result"]
+
+
+latest = rpc("getHealth")["latestLedger"]
+print(json.dumps(rpc("getTransactions", {"startLedger": latest - 10, "pagination": {"limit": 1}}), indent=2))
+```
+
+```javascript JavaScript SDK
+// npm install @stellar/stellar-sdk. Save as sdk.mjs and run: node sdk.mjs
+import { rpc } from '@stellar/stellar-sdk';
+
+const server = new rpc.Server('https://rpc-testnet.lumeus.dev', {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+
+const { latestLedger } = await server.getHealth();
+const page = await server.getTransactions({ startLedger: latestLedger - 10, pagination: { limit: 1 } });
+// envelopeXdr, resultXdr and resultMetaXdr arrive parsed as XDR objects.
+const transactions = page.transactions.map(({ txHash, status, ledger, createdAt, applicationOrder, feeBump }) =>
+  ({ txHash, status, ledger, createdAt, applicationOrder, feeBump }));
+console.log(JSON.stringify({ transactions, cursor: page.cursor }, null, 2));
+```
+
+```python Python SDK
+# pip install stellar-sdk
+import os
+
+from stellar_sdk import SorobanServer
+from stellar_sdk.client.requests_client import RequestsClient
+
+# num_retries=0: raise 429/503 at once instead of sleeping through Retry-After.
+server = SorobanServer(
+    "https://rpc-testnet.lumeus.dev",
+    client=RequestsClient(num_retries=0, custom_headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"}),
+)
+
+latest = server.get_health().latest_ledger
+page = server.get_transactions(start_ledger=latest - 10, limit=1)
+# Leave out the base64 XDR fields to keep the output short.
+xdr_fields = {"envelope_xdr", "result_xdr", "result_meta_xdr", "diagnostic_events_xdr", "events"}
+print(page.model_dump_json(by_alias=True, indent=2, exclude={"transactions": {"__all__": xdr_fields}}))
+```
+</RequestExample>
+
+
+## Result
+
+The fields of `result` (stellar-rpc 29). Fields marked "Present only when it applies" can be absent.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `transactions` | object[] | The transactions of this page, in ledger order. |
+| `transactions[].status` | string | SUCCESS, FAILED, or NOT_FOUND (unknown, or older than the retention window). |
+| `transactions[].txHash` | string | Transaction hash (of the fee-bump transaction for a fee bump). |
+| `transactions[].applicationOrder` | integer | Position of the transaction in its ledger (1-based; 0 when NOT_FOUND). |
+| `transactions[].feeBump` | boolean | True for a fee-bump transaction. |
+| `transactions[].envelopeXdr` | string | TransactionEnvelope. Base64 XDR (with xdrFormat json, the matching Json field instead). Present only when it applies. |
+| `transactions[].envelopeJson` | JSON | TransactionEnvelope. Decoded JSON; only with xdrFormat json. |
+| `transactions[].resultXdr` | string | TransactionResult. Base64 XDR (with xdrFormat json, the matching Json field instead). Present only when it applies. |
+| `transactions[].resultJson` | JSON | TransactionResult. Decoded JSON; only with xdrFormat json. |
+| `transactions[].resultMetaXdr` | string | TransactionMeta. Base64 XDR (with xdrFormat json, the matching Json field instead). Present only when it applies. |
+| `transactions[].resultMetaJson` | JSON | TransactionMeta. Decoded JSON; only with xdrFormat json. |
+| `transactions[].diagnosticEventsXdr` | string[] | Base64 DiagnosticEvent XDR, when diagnostics are recorded. Present only when it applies. |
+| `transactions[].diagnosticEventsJson` | JSON[] | Decoded diagnostic events; only with xdrFormat json. |
+| `transactions[].events` | object | The transaction's events. Present only when it applies. |
+| `transactions[].ledger` | integer | Ledger that included the transaction (0 when NOT_FOUND). |
+| `transactions[].createdAt` | integer | Close time of the including ledger. Unix seconds. |
+| `latestLedger` | integer | Latest ledger the node has. |
+| `latestLedgerCloseTimestamp` | integer | Close time of latestLedger. Unix seconds. |
+| `oldestLedger` | integer | Oldest ledger the node still keeps. |
+| `oldestLedgerCloseTimestamp` | integer | Close time of oldestLedger. Unix seconds. |
+| `cursor` | string | Pass as pagination.cursor to read the next page. |
+
+## Parameters
+
+| Name | Type | Rules |
+| --- | --- | --- |
+| `startLedger` | integer | First ledger, inside the retention window (see `getHealth`). Required unless `pagination.cursor` is set; not both. |
+| `pagination.cursor` | string | Resume after the previous page. |
+| `pagination.limit` | integer | 1 to 200, default 50. |
+| `xdrFormat` | string | `base64` (default) or `json`. |
+
+## Credits and limits
+
+- **Mainnet:** 2 credits plus 1 credit per started 64 KiB of response, so a small answer costs 3 credits. A call that returns a JSON-RPC error costs nothing.
+- **Testnet:** free. Each call counts toward your organization's 10,000 Testnet requests a day; above that, calls get 429 `rate_limited` until 00:00 UTC.
+- Pages hold at most 200 transactions.
+- The plan RPC rate applies per call; each call in a batch counts as one.
+
+## Errors
+
+Gateway errors are JSON-RPC errors with the machine code in `error.data` and the request ID in `error.request_id`. Common ones: `-32602` (`invalid_request`, HTTP 400) for invalid params, `-32000` with `unauthorized` (401), `rate_limited` (429, wait `Retry-After` seconds) or `unavailable` (503). See [errors](/guides/errors).

@@ -1,0 +1,319 @@
+---
+title: Historical snapshots
+description: Holdings and holders at a past ledger, from recent history or a snapshot job.
+---
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+Snapshots answer "what did this address hold, or who held this token, at ledger
+N?". Use them for airdrop lists, audits, and reconciling a past report. There
+are two ways: add `as_of_ledger` to a holdings or holders read for recent
+ledgers (instant), or start a snapshot job for any ledger (seconds to minutes).
+
+| Need | Use |
+| --- | --- |
+| A ledger from `read_view.bootstrap_ledger` up to about 64 ledgers behind the tip | `as_of_ledger` on [holdings](/assets-api/holdings) or [holders](/assets-api/holders) |
+| Holders at a past ledger for an asset with more than 100,000 holders | Snapshot job |
+| A ledger before `bootstrap_ledger` | Snapshot job |
+
+Both run on Testnet. On Mainnet, `as_of_ledger` reads and snapshot jobs answer
+`501 not_implemented`; read the current state there.
+
+<TestnetSetup />
+
+## Pick a valid ledger
+
+Balance history begins at `read_view.bootstrap_ledger` (Testnet: 5253887), so an
+older ledger such as 1234567 returns `409` on an `as_of_ledger` read. The newest
+ledgers are written in 64-ledger batches (about five minutes), so stay at least
+that far behind `read_view.as_of_ledger`. This picks a ledger about 80 minutes
+ago:
+
+```bash
+LATEST=$(curl --fail-with-body -sS "$ASSETS_URL/assets/native" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" | jq .read_view.as_of_ledger)
+export LEDGER=$((LATEST - 1000))
+echo "$LEDGER"
+```
+
+## Recent history: `as_of_ledger`
+
+<CodeGroup>
+
+```bash curl
+export TRADER='GBPAFJ3COSPSNDXZIPD36553DTM72W3R5WF2JU2L5SBGOLNR42ZORDTV'
+
+curl --fail-with-body --get "$ASSETS_URL/accounts/$TRADER/holdings" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode "as_of_ledger=$LEDGER"
+
+curl --fail-with-body --get "$ASSETS_URL/assets/$ASSET/holders" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode "as_of_ledger=$LEDGER"
+```
+
+```js JavaScript
+const base = process.env.ASSETS_URL;
+const headers = { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` };
+const get = async (path) => {
+  const res = await fetch(`${base}${path}`, { headers });
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  return res.json();
+};
+const latest = (await get('/assets/native')).read_view.as_of_ledger;
+const ledger = latest - 1000;
+const TRADER = 'GBPAFJ3COSPSNDXZIPD36553DTM72W3R5WF2JU2L5SBGOLNR42ZORDTV';
+const holdings = await get(`/accounts/${TRADER}/holdings?as_of_ledger=${ledger}`);
+const holders = await get(`/assets/${process.env.ASSET}/holders?as_of_ledger=${ledger}`);
+console.log(holdings.read_view.as_of_ledger, holdings._embedded.records.length, holders.holder_count);
+```
+
+```python Python
+import os, requests
+
+base = os.environ["ASSETS_URL"]
+headers = {"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"}
+
+def get(path, **params):
+    res = requests.get(f"{base}{path}", params=params, headers=headers, timeout=30)
+    res.raise_for_status()
+    return res.json()
+
+ledger = get("/assets/native")["read_view"]["as_of_ledger"] - 1000
+TRADER = "GBPAFJ3COSPSNDXZIPD36553DTM72W3R5WF2JU2L5SBGOLNR42ZORDTV"
+holdings = get(f"/accounts/{TRADER}/holdings", as_of_ledger=ledger)
+holders = get(f"/assets/{os.environ['ASSET']}/holders", as_of_ledger=ledger)
+print(holdings["read_view"]["as_of_ledger"], len(holdings["_embedded"]["records"]), holders["holder_count"])
+```
+
+</CodeGroup>
+
+Trimmed holdings response at a past ledger:
+
+```json
+{
+  "_embedded": {
+    "records": [
+      {
+        "asset": "USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+        "kind": "trustline", "balance": "54816.0682815",
+        "authorized": null, "limit": null,
+        "buying_liabilities": null, "selling_liabilities": null,
+        "spendable": null, "source": "ledger_entry", "verified": true
+      },
+      {
+        "asset": "native", "kind": "native", "balance": "7999.8355302",
+        "spendable": null, "source": "ledger_entry", "verified": true
+      }
+    ]
+  },
+  "account": null,
+  "read_view": {
+    "network": "testnet", "generation": "assets-testnet-v1-5253887",
+    "as_of_ledger": 5330463, "as_of_closed_at": null, "bootstrap_ledger": 5253887
+  }
+}
+```
+
+The answer is the state after that ledger, and `read_view.as_of_ledger` echoes
+it. History stores balances only, so at a past ledger:
+
+- `account`, `limit`, the liabilities and `authorized` are `null`.
+- `spendable` is `null` on every record, XLM and trustlines alike, because it
+  needs the reserve, liabilities and authorization of that ledger.
+- `as_of_closed_at` is `null`. Holders carry `holder_count` at that ledger, but
+  `supply` is `null` (the `supply_source` field still names the current
+  source and does not apply).
+- `include=closed` and simulated balances are not supported, and
+  [publishable keys](/guides/browser-keys) get `403`.
+- Holders refuse assets with more than 100,000 current holders (`409`); use a
+  snapshot job.
+
+On Testnet, `as_of_ledger` reads are free (one request toward the daily Testnet
+cap each). The Mainnet weight is 5 credits per started 100 records.
+
+## Any past ledger: snapshot jobs
+
+A job computes holdings of one address or holders of one asset at any ledger
+from 63 up to the latest applied ledger. This example uses Testnet USDC (2,116
+holders at ledger 1234567, which is before the balance history). It needs `jq`
+and `uuidgen`:
+
+<CodeGroup>
+
+```bash curl
+export SNAPSHOT_KEY="$(uuidgen)"
+
+JOB_ID=$(curl --fail-with-body -sS "$ASSETS_URL/snapshots" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  -H "Idempotency-Key: $SNAPSHOT_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"kind":"holders","asset":"USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5","as_of_ledger":1234567}' \
+  | jq -r .id)
+echo "$JOB_ID"
+
+while :; do
+  STATUS=$(curl --fail-with-body -sS "$ASSETS_URL/snapshots/$JOB_ID" \
+    -H "Authorization: Bearer $LUMEUS_API_KEY" | jq -r .status)
+  echo "$STATUS"
+  case "$STATUS" in completed|failed) break ;; esac
+  sleep 10
+done
+
+curl --fail-with-body -sS "$ASSETS_URL/snapshots/$JOB_ID" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" | jq '.result | del(.records)'
+```
+
+```js JavaScript
+import { randomUUID } from 'node:crypto';
+
+const base = process.env.ASSETS_URL;
+const auth = { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` };
+const key = randomUUID(); // reuse this key if you retry the POST
+
+const created = await fetch(`${base}/snapshots`, {
+  method: 'POST',
+  headers: { ...auth, 'Idempotency-Key': key, 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    kind: 'holders',
+    asset: 'USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+    as_of_ledger: 1234567,
+  }),
+});
+if (!created.ok) throw new Error(`${created.status} ${await created.text()}`);
+let job = await created.json();
+
+while (job.status === 'queued' || job.status === 'running') {
+  await new Promise((r) => setTimeout(r, 10_000));
+  const res = await fetch(`${base}/snapshots/${job.id}`, { headers: auth });
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  job = await res.json();
+}
+if (job.status === 'failed') throw new Error(job.error);
+console.log(job.result.holder_count, job.result.records.length, job.result.truncated);
+```
+
+```python Python
+import os, time, uuid, requests
+
+base = os.environ["ASSETS_URL"]
+auth = {"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"}
+key = str(uuid.uuid4())  # reuse this key if you retry the POST
+
+res = requests.post(
+    f"{base}/snapshots",
+    headers={**auth, "Idempotency-Key": key},
+    json={
+        "kind": "holders",
+        "asset": "USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+        "as_of_ledger": 1234567,
+    },
+    timeout=30,
+)
+res.raise_for_status()
+job = res.json()
+
+while job["status"] in ("queued", "running"):
+    time.sleep(10)
+    res = requests.get(f"{base}/snapshots/{job['id']}", headers=auth, timeout=30)
+    res.raise_for_status()
+    job = res.json()
+if job["status"] == "failed":
+    raise RuntimeError(job["error"])
+print(job["result"]["holder_count"], len(job["result"]["records"]), job["result"]["truncated"])
+```
+
+</CodeGroup>
+
+`POST /snapshots` answers `202` with `Location: /snapshots/{id}` and the job in
+status `queued`. A completed job (live, trimmed to 1 of 2,116 records):
+
+```json
+{
+  "id": "7c1d9e4b-2a5f-4c83-b6e0-9d4f1a3c5e27",
+  "kind": "holders",
+  "params": {"kind": "holders", "asset": "USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5", "as_of_ledger": 1234567},
+  "status": "completed",
+  "created_at": "2026-10-22T14:11:10Z",
+  "finished_at": "2026-10-22T14:11:57Z",
+  "result": {
+    "kind": "holders",
+    "asset": "USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    "source": "checkpoint",
+    "as_of_ledger": 1234567,
+    "as_of_closed_at": "2026-02-27T06:02:27Z",
+    "checkpoint": 1234559,
+    "ledgers_replayed": 8,
+    "holder_count": 2116,
+    "zero_balances": 4340,
+    "truncated": false,
+    "entries_scanned": 2880671,
+    "timings": {"bootstrap_ms": 39244, "replay_ms": 390, "total_ms": 39636},
+    "records": [
+      {
+        "holder": "GAYF33NNNMI2Z6VNRFXQ64D4E4SF77PM46NW3ZUZEEU5X7FCHAZCMHKU",
+        "kind": "trustline", "source": "ledger_entry",
+        "balance": "30484204184.3200196", "balance_raw": "304842041843200196",
+        "decimals": 7, "archived": false, "last_modified_ledger": 1234352
+      }
+    ]
+  }
+}
+```
+
+### Request
+
+| Field | Rules |
+| --- | --- |
+| `kind` | `holdings` (with `address`) or `holders` (with `asset`); the other field returns `400` |
+| `address` / `asset` | A `G...`, `C...` or `M...` address, or an asset ID |
+| `as_of_ledger` | At least 63 and at most the latest applied ledger |
+| `Idempotency-Key` header | Optional, 8 to 128 characters. Retrying with the same key and body returns the existing job with `200`; the same key with a different body answers `409 conflict` |
+
+### Result
+
+| Field | Meaning |
+| --- | --- |
+| `source` | `history` (read from the balance history; seconds) or `checkpoint` (built from a Stellar history archive checkpoint plus at most 63 replayed ledgers; minutes). Both give the same balances |
+| `checkpoint`, `ledgers_replayed` | The archive checkpoint used and the ledgers replayed after it |
+| `records` | Balances (holders sorted by balance, largest first), without paging |
+| `holder_count`, `zero_balances` | Non-zero holders, and zero-balance trustlines left out |
+| `truncated`, `note` | A holders result lists at most the top 10,000 holders. Beyond that `truncated` is `true`, `holder_count` still counts everyone, and `note` says so |
+| `entries_scanned`, `timings` | Work done, in entries and milliseconds |
+
+`status` moves from `queued` to `running` to `completed` (with `result`) or
+`failed` (with `error`). Jobs run one at a time, and an organization can have up
+to 5 jobs queued or running.
+
+### Credits
+
+On Testnet a job is free and counts as one request toward the daily Testnet
+cap. The Mainnet price is 50 credits, charged when the job completes and
+released when it fails.
+Polling `GET /snapshots/{id}` is free. Publishable keys cannot start or read
+jobs.
+
+## Errors
+
+| Status | `code` | Meaning and what to do |
+| --- | --- | --- |
+| `400` | `invalid_request` | `as_of_ledger` is after the latest applied ledger or below 63, or the body or `Idempotency-Key` is invalid. Fix the request |
+| `403` | `forbidden` | A publishable key; use a secret key on your server |
+| `404` | `not_found` | No job with this ID in your organization |
+| `409` | `history_unavailable` | An `as_of_ledger` read the history cannot answer exactly. The message says why: before `bootstrap_ledger`, inside a repaired gap, newer than the last written batch, or an asset with more than 100,000 holders. Start a job, or retry the newest ledgers a few minutes later |
+| `409` | `conflict` | The `Idempotency-Key` was used with a different body |
+| `429` | `rate_limited` | 5 jobs are already queued or running (wait `Retry-After`, 60 s), or the daily Testnet cap is reached (`Retry-After` counts down to 00:00 UTC) |
+| `501` | `not_implemented` | This network does not serve history (Mainnet today) |
+| `503` | `busy`, `query_timeout`, `index_not_ready`, `unavailable` | History busy, out of time, rebuilding, or the job queue is full; wait `Retry-After` |
+
+```json
+{"code": "history_unavailable", "error": "balance history begins at ledger 5253887; for ledger 1234567 start a snapshot job (POST /snapshots)", "request_id": "req_6e1370516f62ed7da88a83d5"}
+```
+
+See [errors](/guides/errors) and [idempotency](/guides/idempotency).
+
+## Next
+
+- [Token holders](/assets-api/holders): the current list and ranks.
+- [Balance webhooks](/webhooks/balance-events): follow changes after a snapshot.
+- [Accuracy](/assets-api/accuracy): how each balance is determined.

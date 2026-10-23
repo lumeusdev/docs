@@ -1,0 +1,292 @@
+---
+title: Receive and verify
+description: Headers, signature checks, deduplication, retries and timeouts for webhook receivers.
+---
+
+This page is the contract between Lumeus and your receiver: what each delivery
+contains, how to verify it, and how your response decides between success and
+retry. Start from one of the ready receivers, which do all of this for you:
+[Node.js](/examples/webhook-receiver-node.mjs) (with
+[verify-webhook.mjs](/examples/verify-webhook.mjs)),
+[Python](/examples/webhook_receiver.py) or
+[Go](/examples/webhook-receiver-go/main.go).
+
+## What a delivery looks like
+
+Each delivery is one `POST` to your `target_url` with a JSON body (one event,
+at most 64 KiB) and these headers:
+
+| Header | Value |
+| --- | --- |
+| `Content-Type` | `application/json` |
+| `User-Agent` | `lumeus-webhooks/0.1` |
+| `X-Webhook-Id` | Delivery ID. Negative for test deliveries |
+| `X-Webhook-Event-Id` | The event `id`, the same as in the body |
+| `X-Webhook-Timestamp` | Unix seconds when this attempt was signed |
+| `X-Webhook-Signature` | `t=<timestamp>,v1=<hex HMAC-SHA256>` of the body |
+| `X-Webhook-Delivery-Context` | Signed delivery context, base64url JSON (see below) |
+| `X-Webhook-Context-Signature` | `t=<timestamp>,v1=<hex>` of the decoded context bytes |
+| `X-Webhook-Lane` | `live`, `replay` or `test` (also inside the signed context) |
+| `X-Webhook-Subscription-Id` | The subscription UUID |
+| `X-Webhook-Key-Version` | Version of the signing key used for `X-Webhook-Signature` |
+| `X-Webhook-Test` | `true` on test deliveries |
+| `X-Webhook-Replay-Id` | Replay job ID, on replayed deliveries |
+| `X-Webhook-Next-Signature`, `X-Webhook-Next-Context-Signature`, `X-Webhook-Next-Key-Version` | Present only during a [key rotation](#key-rotation): the same signatures made with the new key |
+
+Every delivery carries signed context, including Free, paid, test and replayed
+deliveries. Only the body, the timestamp and the context are signed: trust the
+other headers only through the signed context.
+
+## Respond
+
+Your response decides the outcome of the attempt:
+
+| Your receiver | Result |
+| --- | --- |
+| Answers `2xx` within 10 seconds, with a body of at most 4 KiB | Delivered |
+| Answers any other status, including `4xx` | Failed, retried |
+| Answers `3xx` | Failed, retried. Redirects are not followed |
+| Takes longer than 10 seconds, or the TLS or TCP connection fails | Failed, retried |
+| Sends a response body over 4 KiB or headers over 8 KiB | Failed, retried |
+
+Verify the request, store the event and enqueue your work, then answer `204`
+with an empty body. Do slow work after you answer: deliveries to one endpoint
+are sequential, so a slow receiver delays every later event for that endpoint.
+Lumeus connects over HTTPS (TLS 1.2 or later, HTTP/1.1, keep-alive, no
+compression) and checks that the target resolves to a public address on every
+connection.
+
+## Retries and timeouts
+
+| | Value |
+| --- | --- |
+| Attempts | 8 per delivery |
+| Wait between attempts | 2 s, then doubling: 2, 4, 8, 16, 32, 64, 128 s |
+| Retry window | About 4.2 minutes of waits (254 s), plus the time the attempts take |
+| Timeout per attempt | 10 seconds (5 seconds for test deliveries) |
+| In flight per endpoint | Exactly one; later events wait in ledger order |
+| After the last attempt | The delivery is `dead` and the next event is sent |
+
+These values are the same on every plan. A dead delivery is not retried again
+automatically. Find it with
+[`GET /v1/subscriptions/{id}/deliveries`](/reference/webhooks/deliveries/list-recent-deliveries)
+and read the event from the [Activity API](/activity/history); see
+[Coverage and recovery](/webhooks/recovery).
+
+## Verify the signature
+
+```text
+X-Webhook-Signature: t=TIMESTAMP,v1=HEX_HMAC
+signed bytes = TIMESTAMP + "." + raw HTTP body
+HMAC key     = the complete whsec_... secret (keep the prefix)
+```
+
+Reject the request when no secret produces the signature, or when the
+timestamp is more than 300 seconds from your clock. Compare in constant time.
+Verify the raw bytes you received: parsing and re-serializing the JSON changes
+them. Then verify the context signature the same way over the decoded context
+bytes, with the same timestamp.
+
+<Tabs>
+<Tab title="Node.js (Express)">
+
+Download [verify-webhook.mjs](/examples/verify-webhook.mjs) next to your app.
+`express.raw` keeps the body as a Buffer.
+
+```javascript
+import express from 'express';
+import { verifyWebhook } from './verify-webhook.mjs';
+
+const secrets = [process.env.WEBHOOK_SECRET, process.env.WEBHOOK_NEXT_SECRET].filter(Boolean);
+const app = express();
+
+app.post('/webhooks/lumeus', express.raw({ type: 'application/json', limit: '256kb' }), (req, res) => {
+  let verified;
+  try {
+    verified = verifyWebhook({ rawBody: req.body, headers: req.headers, secrets });
+  } catch (error) {
+    console.warn('rejected:', error.message); // a short code such as invalid_webhook_signature
+    return res.status(400).end();
+  }
+  const event = JSON.parse(req.body.toString('utf8'));
+  const { lane, network } = verified.context;
+  // Store the event under the unique key (network, event.id), then answer.
+  console.log(lane, network, event.id, event.type);
+  res.status(204).end();
+});
+
+app.listen(3000);
+```
+
+</Tab>
+<Tab title="Python">
+
+Download [webhook_receiver.py](/examples/webhook_receiver.py). It is a complete
+receiver, and its `verify_webhook` works with any framework that gives you the
+raw body bytes and case-insensitive headers.
+
+```python
+import json
+
+from webhook_receiver import WebhookError, verify_webhook
+
+def handle(raw_body: bytes, headers, secrets):
+    try:
+        context = verify_webhook(raw_body, headers, secrets)["context"]
+    except WebhookError as error:
+        return 400  # str(error) is a short code such as invalid_webhook_signature
+    event = json.loads(raw_body)
+    # Store the event under the unique key (context["network"], event["id"]), then answer.
+    return 204
+```
+
+</Tab>
+<Tab title="Go">
+
+Copy `Verify` from [main.go](/examples/webhook-receiver-go/main.go).
+
+```go
+body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<10))
+if err != nil {
+	w.WriteHeader(http.StatusRequestEntityTooLarge)
+	return
+}
+ctx, ev, err := Verify(body, r.Header, secrets, time.Now())
+if err != nil {
+	w.WriteHeader(http.StatusBadRequest) // err is a short code such as invalid_webhook_signature
+	return
+}
+// Store ev under the unique key (ctx.Network, ev.ID), then answer.
+w.WriteHeader(http.StatusNoContent)
+```
+
+</Tab>
+</Tabs>
+
+The verifiers return these error codes. Log the code, never the headers,
+secret or payload.
+
+| Code | Meaning |
+| --- | --- |
+| `invalid_webhook_signature` | No secret matches the body signature, or the timestamp is more than 300 s off |
+| `missing_delivery_context` | The context headers were removed. Lumeus always sends them |
+| `invalid_delivery_context`, `invalid_context_signature` | The context is malformed or not signed with the same key and timestamp |
+| `context_body_mismatch` | The context does not describe this body (event ID, network, body hash or lane) |
+
+## Delivery context
+
+The decoded `X-Webhook-Delivery-Context` is a small JSON object signed with
+the same key. It binds routing facts to this exact body, so a captured request
+cannot be replayed into a different lane or network:
+
+```json
+{
+  "domain": "lumeus-delivery-context-v1",
+  "delivery_id": 12,
+  "subscription_id": "6f1c1d2e-0000-4000-8000-000000000001",
+  "event_id": "testnet:5294900:20",
+  "lane": "live",
+  "network": "testnet",
+  "generation": "testnet-2025-12-18-v2",
+  "body_sha256": "dc348ac6953f960476c29508e0707b8ba851baf0197e02acfa189c39f4900483"
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `lane` | `live` for new events, `replay` for redelivery (with `replay_job_id`), `test` for test deliveries |
+| `network` | `testnet` or `mainnet` (the body says `pubnet` on Mainnet) |
+| `generation` | The webhook chain generation of the subscription. It changes after a Testnet reset |
+| `body_sha256` | SHA-256 of the raw body |
+
+The verifiers check `domain`, the event ID, the network, the body hash and the
+lane. Also check that `subscription_id` and `network` are the ones this
+receiver expects.
+
+## Deduplicate
+
+Delivery is at least once. Deduplicate on the event, not the delivery: the
+unique key is `(network, id)`, with `network` from the signed context and `id`
+from the body. The context says `mainnet` where event bodies and Activity say
+`pubnet`, so store one spelling (normalize `pubnet` to `mainnet`). `X-Webhook-Id` names one delivery and differs between a live
+delivery and a redelivery of the same event; the event `id` does not. Use a database constraint, not an
+in-memory set:
+
+```sql
+CREATE TABLE lumeus_events (
+  network  text NOT NULL,
+  event_id text NOT NULL,
+  body     jsonb NOT NULL,
+  PRIMARY KEY (network, event_id)
+);
+
+INSERT INTO lumeus_events (network, event_id, body)
+VALUES ($1, $2, $3)
+ON CONFLICT DO NOTHING;
+```
+
+Event ids have a fixed form:
+
+| `kind` | `id` | Example |
+| --- | --- | --- |
+| `token_transfer` | `{network}:{ledger}:{n}` | `testnet:5294900:20` |
+| `contract_event` | `{network}:{ledger}:ce:{tx}:{op}:{event}` | `testnet:2650391:ce:9:0:0` |
+| `balance` | `{network}:{ledger}:b:{holder}:{asset}` | See [Balance events](/webhooks/balance-events#payload) |
+| `test` | `test_{n}` | `test_5` |
+
+- **Same ids as Activity.** Webhooks and the [Activity API](/activity/events)
+  use the same decoder, so one on-chain event has the same `id` in both. Rows
+  you fill from Activity after a gap land on the same key and are ignored as
+  duplicates. When you compare bodies, ignore the Activity-only fields
+  `paging_token` and `rpc_event_id`. `balance.changed` and `webhook.test`
+  events exist only in Webhooks. Ids stay stable within a decoder release; a
+  change that renumbers events will be announced.
+- **Leave `generation` out of the key.** It is product-specific: the signed
+  context carries the webhook chain generation, while Activity reports its own
+  index generation in `read_view.generation`, and the two differ. Use
+  `generation` only with the Webhooks recovery APIs and Activity pagination.
+- **After a Testnet reset**, ledger numbers start again and ids repeat. Start
+  a new store (or add the reset date to the key) for the new Testnet. Mainnet
+  never resets.
+
+## Test deliveries
+
+[`POST /v1/subscriptions/{id}/tests`](/reference/webhooks/deliveries/send-a-test-event)
+sends one signed synthetic event so you can check your receiver:
+
+```json
+{
+  "id": "test_5",
+  "kind": "test",
+  "type": "webhook.test",
+  "test": true,
+  "network": "testnet",
+  "generation": "testnet-2025-12-18-v2",
+  "subscription_id": "6f1c1d2e-0000-4000-8000-000000000001",
+  "created_at": "2026-10-22T10:00:00Z"
+}
+```
+
+It has `X-Webhook-Test: true`, `lane: "test"` in the signed context and a
+negative `X-Webhook-Id`. Verify it like any delivery, then keep it out of your
+balances and workflows. Tests are sent once (no retries), cost no credits and
+are limited to 12 per organization per hour.
+
+## Key rotation
+
+After you [rotate the signing key](/webhooks/lifecycle#rotate-a-signing-key),
+deliveries are signed with both keys for 24 hours: `X-Webhook-Signature` and
+`X-Webhook-Context-Signature` with the old key, the `X-Webhook-Next-*` headers
+with the new key. Configure both secrets (`WEBHOOK_SECRET` and
+`WEBHOOK_NEXT_SECRET` in the examples); the verifiers accept either. Remove the
+old secret after the overlap ends.
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+| --- | --- |
+| Every delivery fails with `invalid_webhook_signature` | The body was parsed before verification, the `whsec_` prefix was dropped, or the secret belongs to another subscription |
+| Failures only on some servers | Clock skew over 300 s. Sync the clock with NTP |
+| Deliveries retry although your code succeeded | Your framework redirected (`3xx`), took over 10 s, or returned a body over 4 KiB |
+| Events arrive late | The receiver is slow; each endpoint has one delivery in flight. Answer first, work later |
+| `missing_delivery_context` | A proxy in front of your receiver strips `X-Webhook-*` headers. Forward them unchanged |

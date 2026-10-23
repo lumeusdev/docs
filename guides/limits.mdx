@@ -1,0 +1,207 @@
+---
+title: Usage and limits
+description: Plan limits, page sizes, credits per route and how to check usage.
+---
+
+Testnet is free: Testnet requests cost no credits, up to a daily request cap.
+Mainnet requests and Mainnet webhook deliveries draw from one monthly credit
+balance per organization. This page lists what each plan allows, what each request
+costs and how to check your usage. More API keys do not add credits or rate.
+
+## Plan limits
+
+The live values are in `GET https://api.lumeus.dev/v1/plans` (no key needed).
+Prices are in [plans and billing](/guides/billing).
+
+| Plan | Mainnet credits per month | Testnet requests per day | Activity and Assets requests per minute | RPC requests per minute | Webhook endpoints |
+| --- | --- | --- | --- | --- | --- |
+| Free | 250,000, hard cap | 10,000 | 60 | 30 | 1 Testnet endpoint |
+| Starter | 3,000,000 | 10,000 | 600 | 300 | 10 |
+| Growth | 12,000,000 | 10,000 | 3,000 | 600 | 50 |
+| Scale | 64,000,000 | 10,000 | 6,000 | 1,200 | 250 |
+| Enterprise | By agreement | Unlimited | 30,000 | 10,000 | 1,000 per network |
+
+On Free, a Mainnet request that would pass 250,000 credits returns `402` until
+the period resets; paid plans continue with overage. A request over the
+per-minute rate returns `429` with `Retry-After`; see
+[rate limits](/guides/rate-limits).
+
+## Testnet is free
+
+Testnet requests to the Activity API, the Assets API and RPC, and Testnet
+webhook deliveries, cost 0 credits and are never billed. Each workspace can
+make up to 10,000 Testnet requests per UTC day (unlimited on Enterprise). The
+count resets at 00:00 UTC.
+
+- Every request counts, including requests that later fail. Each call in an
+  RPC batch counts as one request.
+- Over the cap, Activity and Assets return `429` with `code: rate_limited`, and
+  `Retry-After` is the number of seconds until 00:00 UTC. A refused request
+  costs nothing and is not counted.
+
+  ```json
+  {"error":"daily Testnet request cap of 10000 reached; resets at 00:00 UTC","code":"rate_limited","request_id":"req_…"}
+  ```
+
+- RPC returns HTTP `429`, and every call in the request gets a JSON-RPC error
+  with the same message, `"data":"rate_limited"` and `request_id`. A batch that
+  would cross the cap is refused whole and counts nothing. A request of
+  notifications only gets `429` with an empty body.
+- The per-minute rate limits apply on Testnet as on Mainnet.
+- The Free Testnet webhook endpoint keeps its own cap of 1,000 deliveries a UTC
+  day.
+
+The `testnet` block of [`/v1/usage`](#check-usage) shows today's count, and
+`testnet_daily_requests` in `/v1/plans` gives each plan's cap (`null` means
+unlimited).
+
+<Note>
+Plan rates are ceilings, not guarantees. In load tests (October 2026) one
+workspace sustained about 10 requests per second on the Activity API, about 9
+on the Assets API and a few per second on RPC, whatever the plan. Faster
+traffic queues, or returns `429` or `503` with `Retry-After`. Contact
+hello@lumeus.dev if you need more.
+</Note>
+
+## Credits
+
+Credits apply to Mainnet; Testnet requests cost 0 credits. REST data routes
+cost their route weight per started 100 records, and at least one credit per
+started 64 KiB of response:
+
+```text
+credits = max(weight x ceil(rows / 100), ceil(response_bytes / 64 KiB))
+```
+
+**Worked example.** An asset activity page (weight 5) with `limit=200` and 200
+records costs `max(5 x 2, 1)` = 10 credits. The same page with 30 records costs
+5. An account activity page (weight 1) with 1,000 records costs at least 10, and
+more if the response is over 640 KiB.
+
+### Activity API
+
+Page size: default 10. Up to 1,000 on `/accounts/{id}/activity` and both topic
+routes, and up to 200 elsewhere. A larger `limit` is lowered to the maximum; the
+page reports the effective `limit`.
+
+| Route | Weight | Max `limit` |
+| --- | ---: | ---: |
+| `/accounts/{id}/activity` | 1 | 1,000 |
+| `/accounts/{id}/contract-events` (topic search) | 1 | 1,000 |
+| `/contracts/{id}/activity` with `topic1`, `topic2` or `topic3` | 1 | 1,000 |
+| `/transactions/{hash}/activity` | 1 | 200 |
+| `/transactions/{hash}` (header) | 1 | n/a |
+| `/assets/{asset}/activity` | 5 | 200 |
+| `/contracts/{id}/activity` without a topic | 5 | 200 |
+| `/activity` (network feed) | 10 | 200 |
+
+### Assets API
+
+Page size: default 50, up to 200. Follow `_links.next.href`; cursors are opaque.
+
+| Route | Weight |
+| --- | ---: |
+| `/accounts/{address}/holdings` | 1 |
+| `/accounts/{address}/claimable-balances`, `/offers`, `/allowances` | 1 |
+| `/assets`, `/assets/{asset}` | 1 |
+| `/assets/{asset}/holders/{address}` (one holder and its rank) | 2 |
+| `/assets/{asset}/holders` | 5 |
+| Holdings or holders with `as_of_ledger` | 5 |
+| `POST /snapshots` | 50 per job |
+| Each unverified token simulated in a holdings response | +1 |
+
+A holder answer whose rank is still being computed (`rank: null` with
+`rank_note`) is not charged.
+
+### RPC
+
+RPC costs the method's credits plus one credit per started 64 KiB of response,
+so a small `getHealth` costs 2. Each call in a batch is charged on its own.
+
+| Credits | Methods |
+| ---: | --- |
+| 1 | `getHealth`, `getNetwork`, `getVersionInfo`, `getFeeStats`, `getLatestLedger`, `getTransaction` |
+| 2 | `getTransactions`, `getLedgers`, `getEvents`, `getLedgerEntries`, `sendTransaction` |
+| 5 | `simulateTransaction` |
+
+A completed simulation that returns `result.error` is still charged. See
+[RPC methods](/rpc/methods) for request and response ceilings.
+
+### Webhooks
+
+On paid plans each event delivered on Mainnet costs 1 credit. Testnet
+deliveries cost nothing on every plan; the Free Testnet endpoint is capped at
+1,000 deliveries a UTC day. Management calls and test deliveries are free.
+
+### Errors
+
+Error responses cost 0 credits, with one exception on Mainnet: an unknown
+transaction hash on `/transactions/{hash}` or `/transactions/{hash}/activity`
+returns `404 not_found` and costs the route's minimum of 1 credit, because the
+lookup searched the full history. For exactly when a request is charged, see
+[plans and billing](/guides/billing#when-a-request-is-charged).
+
+The live weights are `credit_weights` in `/v1/plans`.
+
+## Assets API errors
+
+| Status | Meaning |
+| --- | --- |
+| `400` | Invalid input, an unknown or repeated query parameter, or an `as_of_ledger` after the latest applied ledger |
+| `401` | Missing, revoked or wrong-network key |
+| `402` | The organization reached its Mainnet credit cap |
+| `403` | A publishable key on a route it cannot call (holders, snapshots, `as_of_ledger`) or from an unlisted `Origin`, or an account whose email is not confirmed |
+| `404` | Unknown asset, or the address has no entry for it |
+| `409` | `history_unavailable`: `as_of_ledger` cannot be answered from the balance history (start a snapshot job); or an `Idempotency-Key` reused with a different snapshot request |
+| `429` | Rate limit, the daily Testnet request cap, or too many snapshot jobs queued (`Retry-After: 60`) |
+| `501` | `not_implemented`: `as_of_ledger` and snapshots are not available on this network |
+| `503` | `index_not_ready`, `busy` or `query_timeout` (lower `limit` first); wait `Retry-After` seconds |
+
+Full code list: [errors](/guides/errors#error-codes).
+
+## Check usage
+
+```bash
+curl --fail-with-body "$ACTIVITY_URL/v1/usage" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY"
+```
+
+```json Response (trimmed)
+{
+  "plan": "free",
+  "hard_cap": true,
+  "monthly_credits_limit": 250000,
+  "monthly_credits_used": 5393,
+  "monthly_credits_remaining": 244607,
+  "monthly_requests": 2034,
+  "rate_limit_per_minute": 60,
+  "period_start": "2026-10-18T13:58:22Z",
+  "period_end": "2026-11-18T13:58:22Z",
+  "testnet": {
+    "free": true,
+    "day": "2026-10-22",
+    "daily_requests_used": 1234,
+    "daily_requests_limit": 10000,
+    "daily_requests_remaining": 8766,
+    "resets_at": "2026-10-23T00:00:00Z"
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `monthly_credits_used`, `monthly_credits_remaining` | Mainnet credits this billing period. Testnet never adds to them. |
+| `monthly_requests` | Charged requests on both networks this period, Testnet included at 0 credits |
+| `testnet.daily_requests_used` | Testnet requests admitted today (UTC), each RPC batch call counted |
+| `testnet.daily_requests_limit`, `testnet.daily_requests_remaining` | The daily cap and what is left; `null` on Enterprise (unlimited) |
+| `testnet.resets_at` | The next 00:00 UTC |
+
+`GET /v1/me` carries the same `testnet` block. The block is left out only when
+the counter cannot be read. Use `/v1/usage/breakdown` to group usage by key,
+network and route (including Assets routes; Testnet rows show 0 credits), and
+`/v1/usage/series` for daily or hourly buckets. `/v1/logs` lists the last 24 hours of API-key requests;
+filter with `product=activity`, `assets` or `rpc`.
+
+Paid webhook deliveries appear under the `webhooks` endpoint. Credits equal
+delivered events, but deliveries are recorded in batches a few seconds after
+they succeed, so the request count there counts batches, not events.

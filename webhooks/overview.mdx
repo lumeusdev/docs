@@ -1,0 +1,196 @@
+---
+title: Webhooks overview
+description: Signed HTTPS pushes of decoded Stellar events, balance changes and test events.
+---
+
+Lumeus Webhooks push decoded Stellar events to your HTTPS endpoint a few
+seconds after each ledger closes. You choose what to receive with filters (an
+account, an asset, a contract and event types); every delivery is signed, and
+failed deliveries are retried.
+
+To set one up in five minutes, follow [Your first webhook](/webhooks/quickstart).
+
+## What you can receive
+
+Each delivery body is one JSON event object. Pick the kinds you want with
+`event_types`; an empty or omitted list receives every decoded event that
+matches your other filters.
+
+| `event_types` value | You receive |
+| --- | --- |
+| `transfer` | A token moved between two addresses (XLM, classic assets, SAC and SEP-41 tokens) |
+| `mint` | New tokens were issued |
+| `burn` | Tokens were destroyed |
+| `clawback` | An issuer clawed tokens back |
+| `fee` | The transaction fee charged to the source account |
+| Any contract event name, such as `swap` or `approve` | Soroban contract events whose first topic is that symbol (1 to 32 characters of `A-Z`, `a-z`, `0-9`, `_`) |
+| `balance.changed` | The new balance of a holder after each ledger that changes it. See [Balance events](/webhooks/balance-events) |
+| `balance.changed.fees` | The same, plus XLM changes caused only by fees |
+
+A value that fits none of these, such as `balance.everything` or `my-event`,
+returns `400`. A value that is a valid contract event name but looks like a
+typo of a token type, such as `transfers` or `Mint`, is accepted, and the
+response carries a `warnings` array that says what it will match.
+
+Filters combine with AND:
+
+| Filter | Matches |
+| --- | --- |
+| `account` | Token events where the address is `from`, `to`, `to_muxed_address` or `issuer`. Contract events never match `account`; use `contract_addr` |
+| `asset` | `native`, `CODE:ISSUER`, or (for balance events) a `C...` token contract or `pool:<64 hex>` |
+| `contract_addr` | The event's `contract_address`, for token and contract events |
+| `event_types` | The event's `type`. `transfer` also matches a contract event whose first topic is `transfer` |
+
+### Sample payloads
+
+A token transfer (the body of a `transfer` delivery):
+
+```json
+{
+  "id": "testnet:5294900:20",
+  "kind": "token_transfer",
+  "type": "transfer",
+  "network": "testnet",
+  "ledger": 5294900,
+  "closed_at": "2026-10-20T12:08:07Z",
+  "tx_hash": "25a493371952f0f99a6ff2dabcdbb783db6062ec7e7a5933c962b836fea08a0b",
+  "tx_index": 6,
+  "operation_index": 1,
+  "asset": "native",
+  "contract_address": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+  "from": "GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR",
+  "to": "GAIGKM2WWDVEB4OCV3Q4YICODYWTWFZ5CDOWG7I7Y5HJW7VVFQ7BSUCL",
+  "amount": "10000.0000000",
+  "amount_raw": "100000000000"
+}
+```
+
+A contract event (the body of an `approve` delivery):
+
+```json
+{
+  "id": "testnet:2650391:ce:9:0:0",
+  "kind": "contract_event",
+  "type": "approve",
+  "network": "testnet",
+  "ledger": 2650391,
+  "closed_at": "2026-05-20T07:17:29Z",
+  "tx_hash": "8c7f3bc80381cf504285ee4fc17a4ab20fb94c8f8f6ed3688124e3e82ec021c0",
+  "tx_index": 9,
+  "operation_index": 1,
+  "contract_address": "CCUX7JEJBAUCTFWXY5LQ4FOVIXF2ZWBTPXXZQN5CTGMJ7A2LUHYU22MY",
+  "topics": [
+    "approve",
+    "CAT6HNJZ6ODHXRA77FKDVPAG3RX4B6I362SU4K4DDCRN6J7TDY75OZSI",
+    "GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR"
+  ],
+  "data": ["50000000", 2667669],
+  "topics_xdr": [
+    "AAAADwAAAAdhcHByb3ZlAA==",
+    "AAAAEgAAAAEn47U584Z7xB/5VDq8BtxvwPkb9qVOK4MYot8n8x4/1w==",
+    "AAAAEgAAAAAAAAAAEH3Rayw4M0iCLoEe96rPFNGYim8AVHJU0z4ebYZW4Jw="
+  ],
+  "data_xdr": "AAAAEAAAAAEAAAACAAAACgAAAAAAAAAAAAAAAAL68IAAAAADACi0lQ=="
+}
+```
+
+The fields are those of the [Activity API event model](/activity/events),
+without the Activity paging fields. Token events can also carry memo and muxed
+destination fields (`memo_type`, `memo`, `to_muxed_id`, `to_muxed_address`).
+On Mainnet, `network` is `pubnet`. Amounts are strings; parse them as exact
+decimals or integers.
+
+## Plans
+
+| Plan | Networks | Endpoints per network | Testnet deliveries | Mainnet deliveries |
+| --- | --- | --- | --- | --- |
+| Free | Testnet | 1 | Free, up to 1,000 per organization per UTC day | Not included |
+| Starter | Testnet and Mainnet | 10 | Free | 1 credit per delivered event |
+| Growth | Testnet and Mainnet | 50 | Free | 1 credit per delivered event |
+| Scale | Testnet and Mainnet | 250 | Free | 1 credit per delivered event |
+| Enterprise | Testnet and Mainnet | 1,000 | Free | 1 credit per delivered event |
+
+- **Free.** When a ledger's matches would pass the day's 1,000, that ledger is
+  skipped (a `free_quota_exhausted` [coverage gap](/webhooks/recovery)) and the
+  endpoint shows `effective_state: "paused_by_funding"` until 00:00 UTC.
+  `GET /v1/subscriptions/{id}` reports the day's usage in `free_quota`. A second
+  Free endpoint, or one on Mainnet, returns `403`.
+- **Paid plans.** Mainnet deliveries draw from your organization's monthly
+  credit balance (see [Plans and billing](/guides/billing)); Testnet
+  deliveries cost 0 credits. Failed, cancelled and expired deliveries cost
+  nothing, and the retries of one event are charged once. Upgrading keeps your
+  Free Testnet endpoint; new endpoints count against the plan. Moving back to
+  Free pauses paid endpoints (`plan_not_entitled` coverage gaps) until you
+  upgrade again; nothing is deleted.
+
+Webhooks use their own `whk_` key, created per network in the dashboard under
+**Webhooks > Webhook keys**. `lum_` API keys do not manage webhooks.
+
+## Go live on Mainnet
+
+The API, payloads and signatures are the same on both networks. The host
+selects the network; there is no `network` field (an unknown body field
+returns `400` with `invalid JSON body: unknown field "network"`).
+
+| | Testnet | Mainnet |
+| --- | --- | --- |
+| Host | `https://webhooks-testnet.lumeus.dev` | `https://webhooks.lumeus.dev` |
+| Key | Testnet `whk_` key | Mainnet `whk_` key (select **Mainnet** in the dashboard, then **Webhooks > Webhook keys**) |
+| Plan | Free or paid | Starter, Growth, Scale or Enterprise. Free gets `403` |
+| Cost | 0 credits | 1 credit per delivered event |
+| `network` in the body and event `id` | `testnet` | `pubnet` (the signed context says `mainnet`) |
+
+To move a Testnet integration to Mainnet:
+
+1. Upgrade the organization to a paid plan.
+2. Create a Mainnet `whk_` key and point `WEBHOOKS_URL` at
+   `https://webhooks.lumeus.dev`.
+3. Deploy your receiver at a stable public HTTPS URL (not a tunnel), with
+   events stored under a database unique key (see
+   [Deduplicate](/webhooks/receive#deduplicate)).
+4. Create the subscription on the Mainnet host and store its `hmac_secret` in
+   your secret manager. Send a test event, then watch
+   [deliveries](/webhooks/recovery#find-failed-deliveries).
+
+{/* not-run: creates a Mainnet subscription */}
+```bash
+# Mainnet: paid plan, Mainnet whk_ key, your production receiver
+export WEBHOOKS_URL='https://webhooks.lumeus.dev'
+export LUMEUS_WEBHOOK_KEY='paste-your-mainnet-whk_-key'
+export RECEIVER_URL='https://hooks.example.com/lumeus'
+export ACCOUNT='paste-the-mainnet-account-to-watch'
+
+curl --fail-with-body -sS "$WEBHOOKS_URL/v1/subscriptions" \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" \
+  -H "Idempotency-Key: $(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)" \
+  -H 'Content-Type: application/json' \
+  --data "$(jq -n --arg target "$RECEIVER_URL" --arg account "$ACCOUNT" \
+    '{name:"payments",target_url:$target,account:$account,event_types:["transfer"]}')" \
+  > subscription.json
+```
+
+## Delivery guarantees
+
+- **At least once.** An event can arrive more than once, for example when your
+  acknowledgement is lost. Deduplicate on `(network, id)`; see
+  [Receive and verify](/webhooks/receive#deduplicate).
+- **In order per endpoint.** Each endpoint has exactly one delivery in flight,
+  sent in ledger order. The next event goes out when your receiver answers the
+  previous one, so an endpoint's throughput is set by your response time.
+  Answer fast, and split busy filters across several endpoints.
+- **Retried, then dead.** A failed attempt is retried, up to 8 attempts over
+  about 4 minutes; then the delivery is `dead` and the next event goes out.
+  Details in [Receive and verify](/webhooks/receive#retries-and-timeouts).
+- **From activation onward.** Live matching starts after the subscription's
+  `activation_checkpoint` ledger. Read earlier events from
+  [Activity history](/activity/history).
+- **Up to 4,096 events per ledger per endpoint.** A ledger with more matches is
+  recorded as a `payload_or_policy_limit` coverage gap; narrow the filters.
+
+## Next
+
+- [Your first webhook](/webhooks/quickstart): receiver, tunnel, create, test.
+- [Receive and verify](/webhooks/receive): headers, signatures, retries.
+- [Manage subscriptions](/webhooks/lifecycle): pause, update, rotate, delete.
+- [Webhooks API reference](/reference/webhooks/subscriptions/create-a-subscription): every
+  request and response field.

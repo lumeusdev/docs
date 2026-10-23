@@ -1,0 +1,167 @@
+---
+title: Lumeus RPC
+sidebarTitle: Overview
+description: Standard Stellar JSON-RPC with an API key, metering and recent history.
+---
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+Lumeus RPC is hosted Stellar JSON-RPC. Use it to read current ledger state,
+simulate and submit transactions, and read recent ledgers, transactions and
+events. Every request is one `POST /` to the RPC host for your network, with
+your `lum_` key in the `Authorization` header.
+
+| Network | RPC URL | Key prefix |
+| --- | --- | --- |
+| Testnet | `https://rpc-testnet.lumeus.dev` | `lum_test_` |
+| Mainnet | `https://rpc.lumeus.dev` | `lum_live_` |
+
+The official Stellar SDKs work unchanged once they send the key; see
+[Stellar SDKs](/rpc/sdks).
+
+## First call
+
+<TestnetSetup />
+
+<CodeGroup>
+
+```bash curl
+curl -sS --fail-with-body "$RPC_URL/" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"getHealth"}'
+```
+
+```js JavaScript
+const response = await fetch(`${process.env.RPC_URL}/`, {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${process.env.LUMEUS_API_KEY}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getHealth" }),
+});
+const body = await response.json();
+if (body.error) {
+  throw new Error(`${response.status} ${body.error.data ?? body.error.code}: ${body.error.message}`);
+}
+console.log(body.result);
+```
+
+```python Python
+import os
+import requests
+
+response = requests.post(
+    f"{os.environ['RPC_URL']}/",
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    json={"jsonrpc": "2.0", "id": 1, "method": "getHealth"},
+    timeout=30,
+)
+body = response.json()
+if "error" in body:
+    error = body["error"]
+    raise SystemExit(f"{response.status_code} {error.get('data', error['code'])}: {error['message']}")
+print(body["result"])
+```
+
+</CodeGroup>
+
+```json Response
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "status": "healthy",
+    "latestLedger": 5331462,
+    "latestLedgerCloseTime": "1792680897",
+    "oldestLedger": 5244415,
+    "oldestLedgerCloseTime": "1792245662",
+    "ledgerRetentionWindow": 120960
+  }
+}
+```
+
+Always send an `id`. A request without one is a JSON-RPC notification: the
+method runs and is charged, but the answer is `204` with an empty body.
+
+## Responses
+
+Check the HTTP status first, then look for `error` in the JSON-RPC body.
+
+| HTTP | Body | What to do |
+| --- | --- | --- |
+| `200` with `result` | The method's result | Use it. |
+| `200` with `error` | An error from the Stellar node, such as a ledger outside retention | Read `error.message`. These have no `error.data`. |
+| `204`, empty | A notification (a request without `id`) | Send an `id` to get the answer. |
+| `202` | A pending idempotent request | See [idempotency](/guides/idempotency). |
+| `400` | `-32700`, `-32600`, `-32601` or `-32602`, `error.data` `invalid_request` | Fix the body or params. The message names the problem. |
+| `401` | `-32000`, `unauthorized` | Use a valid key for this network's host. |
+| `402` | `-32000`, `payment_required` | Mainnet: your monthly credits are used up. See [billing](/guides/billing). |
+| `403` | `-32000`, `forbidden` | A read-only key sent `sendTransaction`, or a [publishable key](/guides/browser-keys) called a method or used an origin it is not allowed. Use a full server key. |
+| `413` | `-32600` `invalid_request`, or `-32000` `response_too_large` | The request body is over 1 MiB (`-32600`), or the answer would be over its size limit (`-32000`). Send less, or lower `pagination.limit`. |
+| `429` | `-32000`, `rate_limited`, with `Retry-After` | Over the per-minute rate: wait `Retry-After` seconds, then retry. Over the daily Testnet cap of 10,000 requests, the message says so and `Retry-After` counts down to 00:00 UTC. |
+| `503` | `-32000`, `unavailable` or `submission_outcome_unknown`, with `Retry-After` | Retry later. After a send, poll `getTransaction` first. |
+
+Lumeus errors keep the JSON-RPC shape. `error.data` is the machine-readable
+code, and `error.request_id` matches the `X-Request-Id` header:
+
+```json
+{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"valid API key required","data":"unauthorized","request_id":"req_c54e5443c8a943a5b852edae"}}
+```
+
+A node error arrives with HTTP `200`. For example, `getEvents` with a
+`startLedger` outside retention:
+
+```json
+{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"startLedger must be within the ledger range: 5244415 - 5332491"}}
+```
+
+The node's wording differs by method (`getTransactions` and `getLedgers` say
+"start ledger (1) must be between the oldest ledger …"), so branch on the
+code and the HTTP status, not on the message.
+
+The full code list is in [RPC errors](/guides/errors#rpc-errors). For a
+`sendTransaction` whose answer was lost, see
+[submit transactions](/rpc/transactions#if-the-send-times-out).
+
+## Batches
+
+Send a JSON array of 1 to 20 requests to make several calls at once. Each child
+gets its own response, matched by `id`.
+
+```bash
+curl -sS --fail-with-body "$RPC_URL/" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '[{"jsonrpc":"2.0","id":1,"method":"getNetwork"},{"jsonrpc":"2.0","id":2,"method":"getHealth"}]' \
+  | jq -c '.[] | {id, result}'
+```
+
+```json Response
+{"id":1,"result":{"passphrase":"Test SDF Network ; September 2015","protocolVersion":29}}
+{"id":2,"result":{"status":"healthy","latestLedger":5332496,"latestLedgerCloseTime":"1792686067","oldestLedger":5244415,"oldestLedgerCloseTime":"1792245662","ledgerRetentionWindow":120960}}
+```
+
+- Each child counts as one request against your
+  [RPC rate limit](/guides/rate-limits) (Free: 30 per minute) and, on Testnet,
+  toward the daily Testnet cap, so a batch of 2 lowers `RateLimit-Remaining`
+  by 2. A batch that would cross either limit is refused whole.
+- Each child is charged its own [credits](/rpc/methods#credits).
+- Children run one after another under a shared deadline and a 64 MiB limit
+  for the whole response.
+
+## History and retention
+
+RPC keeps up to about 7 days of recent ledgers, transactions and events
+(`ledgerRetentionWindow` is 120,960 ledgers). `getHealth` returns the current
+`oldestLedger` and `latestLedger`, and `oldestLedger` is the authority: after a
+node rebuild the window can be shorter until it fills again. For older account and contract history, use
+the [Activity API](/activity/overview). For balances and holders, use the
+[Assets API](/assets-api/overview).
+
+## Next
+
+- [Methods](/rpc/methods): the 12 methods, their parameters, limits and credits.
+- [Submit transactions](/rpc/transactions): a complete Testnet payment.
+- [API reference](/api/rpc/getHealth): the schema of each method.

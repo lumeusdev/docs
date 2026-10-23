@@ -1,0 +1,146 @@
+---
+title: "getLedgers"
+description: "Read ledgers with their header and metadata XDR."
+openapi: "/api-reference/rpc/getLedgers.json POST /"
+---
+
+Returns a page of ledgers from `startLedger` (or from a `cursor`), each with its hash, close time, header XDR and metadata XDR. Pass the returned `cursor` to read the next page.
+
+The examples call Testnet with your key in `LUMEUS_API_KEY`; the SDK tabs use `@stellar/stellar-sdk` and the Python `stellar-sdk` ([SDK setup and errors](/rpc/sdks)) (the curl example uses `jq`). On Mainnet, use `https://rpc.lumeus.dev` and a `lum_live_` key.
+
+<RequestExample>
+```bash cURL
+LATEST=$(curl --fail-with-body -s https://rpc-testnet.lumeus.dev \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' | jq .result.latestLedger)
+
+curl --fail-with-body -s https://rpc-testnet.lumeus.dev \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc --argjson start $((LATEST - 1)) \
+    '{jsonrpc:"2.0",id:1,method:"getLedgers",params:{startLedger:$start,pagination:{limit:1}}}')"
+```
+
+```javascript JavaScript
+// Node 18+. Save as rpc.mjs and run: node rpc.mjs
+const rpc = async (method, params) => {
+  const res = await fetch('https://rpc-testnet.lumeus.dev', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.LUMEUS_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  });
+  const body = await res.json();
+  if (body.error) throw new Error(`${body.error.data ?? body.error.code}: ${body.error.message}`);
+  return body.result;
+};
+
+const { latestLedger } = await rpc('getHealth');
+console.log(JSON.stringify(await rpc('getLedgers', { startLedger: latestLedger - 1, pagination: { limit: 1 } }), null, 2));
+```
+
+```python Python
+import json
+import os
+
+import requests
+
+
+def rpc(method, params=None):
+    body = {"jsonrpc": "2.0", "id": 1, "method": method}
+    if params is not None:
+        body["params"] = params
+    res = requests.post(
+        "https://rpc-testnet.lumeus.dev",
+        json=body,
+        headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+        timeout=30,
+    )
+    data = res.json()
+    if "error" in data:
+        raise RuntimeError(f"{data['error'].get('data')}: {data['error']['message']}")
+    return data["result"]
+
+
+latest = rpc("getHealth")["latestLedger"]
+print(json.dumps(rpc("getLedgers", {"startLedger": latest - 1, "pagination": {"limit": 1}}), indent=2))
+```
+
+```javascript JavaScript SDK
+// npm install @stellar/stellar-sdk. Save as sdk.mjs and run: node sdk.mjs
+import { rpc } from '@stellar/stellar-sdk';
+
+const server = new rpc.Server('https://rpc-testnet.lumeus.dev', {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+
+const { latestLedger } = await server.getHealth();
+const page = await server.getLedgers({ startLedger: latestLedger - 1, pagination: { limit: 1 } });
+// headerXdr and metadataXdr arrive parsed as XDR objects; metadataXdr is large.
+const ledgers = page.ledgers.map(({ hash, sequence, ledgerCloseTime }) => ({ hash, sequence, ledgerCloseTime }));
+console.log(JSON.stringify({ ledgers, cursor: page.cursor }, null, 2));
+```
+
+```python Python SDK
+# pip install stellar-sdk
+import os
+
+from stellar_sdk import SorobanServer
+from stellar_sdk.client.requests_client import RequestsClient
+
+# num_retries=0: raise 429/503 at once instead of sleeping through Retry-After.
+server = SorobanServer(
+    "https://rpc-testnet.lumeus.dev",
+    client=RequestsClient(num_retries=0, custom_headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"}),
+)
+
+latest = server.get_health().latest_ledger
+page = server.get_ledgers(start_ledger=latest - 1, limit=1)
+# header_xdr and metadata_xdr are base64 XDR; metadata_xdr is large.
+print(page.model_dump_json(by_alias=True, indent=2, exclude={"ledgers": {"__all__": {"header_xdr", "metadata_xdr"}}}))
+```
+</RequestExample>
+
+
+## Result
+
+The fields of `result` (stellar-rpc 29). Fields marked "Present only when it applies" can be absent.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `ledgers` | object[] | The ledgers of this page, in ascending order. |
+| `ledgers[].hash` | string | Ledger hash (hex). |
+| `ledgers[].sequence` | integer |   |
+| `ledgers[].ledgerCloseTime` | string | Close time. Unix seconds, as a string. |
+| `ledgers[].headerXdr` | string | LedgerHeader. Base64 XDR (with xdrFormat json, the matching Json field instead). Present only when it applies. |
+| `ledgers[].headerJson` | JSON | LedgerHeader. Decoded JSON; only with xdrFormat json. |
+| `ledgers[].metadataXdr` | string | LedgerCloseMeta. Base64 XDR (with xdrFormat json, the matching Json field instead). Present only when it applies. |
+| `ledgers[].metadataJson` | JSON | LedgerCloseMeta. Decoded JSON; only with xdrFormat json. |
+| `latestLedger` | integer | Latest ledger the node has. |
+| `latestLedgerCloseTime` | integer | Close time of latestLedger. Unix seconds. |
+| `oldestLedger` | integer | Oldest ledger the node still keeps. |
+| `oldestLedgerCloseTime` | integer | Close time of oldestLedger. Unix seconds. |
+| `cursor` | string | Pass as pagination.cursor to read the next page. |
+
+## Parameters
+
+| Name | Type | Rules |
+| --- | --- | --- |
+| `startLedger` | integer | First ledger, inside the retention window (see `getHealth`). Required unless `pagination.cursor` is set; not both. |
+| `pagination.cursor` | string | Resume after the previous page. |
+| `pagination.limit` | integer | Testnet: 1 to 200, default 50. Mainnet: 1 to 20, default 10; with `xdrFormat: "json"` 1 to 5, default 5. |
+| `xdrFormat` | string | `base64` (default) or `json`. |
+
+## Credits and limits
+
+- **Mainnet:** 2 credits plus 1 credit per started 64 KiB of response, so a small answer costs 3 credits. A call that returns a JSON-RPC error costs nothing.
+- **Testnet:** free. Each call counts toward your organization's 10,000 Testnet requests a day; above that, calls get 429 `rate_limited` until 00:00 UTC.
+- Mainnet pages are small because one Mainnet ledger with metadata is about 1 to 2.3 MB and a page must fit the 64 MiB response ceiling. A larger `limit` answers 400 `pagination limit must be 1 to 20`. The example response shortens the XDR fields.
+- The plan RPC rate applies per call; each call in a batch counts as one.
+
+## Errors
+
+Gateway errors are JSON-RPC errors with the machine code in `error.data` and the request ID in `error.request_id`. Common ones: `-32602` (`invalid_request`, HTTP 400) for invalid params, `-32000` with `unauthorized` (401), `rate_limited` (429, wait `Retry-After` seconds) or `unavailable` (503). See [errors](/guides/errors).

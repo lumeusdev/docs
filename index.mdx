@@ -1,0 +1,105 @@
+---
+title: Lumeus docs
+sidebarTitle: Introduction
+description: Stellar Mainnet and Testnet. Activity, assets, webhooks and RPC.
+mode: wide
+---
+
+<Columns cols={4}>
+  <Card title="Activity API" icon="list-filter" href="/activity/overview" arrow>
+    Read account history and decoded Stellar events.
+  </Card>
+  <Card title="Assets API" icon="coins" href="/assets-api/overview" arrow>
+    Read balances, token holders and the token registry.
+  </Card>
+  <Card title="Webhooks" icon="webhook" href="/webhooks/overview" arrow>
+    Receive signed events at your HTTPS endpoint.
+  </Card>
+  <Card title="RPC" icon="terminal" href="/rpc/overview" arrow>
+    Query state, simulate and submit transactions.
+  </Card>
+</Columns>
+
+## Get started
+
+<Columns cols={3}>
+  <Card title="Quickstart" icon="square-terminal" href="/quickstart" horizontal>
+    Sign up, copy your key and make your first call.
+  </Card>
+  <Card title="Set up with an agent" icon="bot" href="/agents/overview" horizontal>
+    One prompt for Claude Code, Cursor or Codex.
+  </Card>
+  <Card title="Plans and pricing" icon="credit-card" href="/guides/billing" horizontal>
+    Testnet is free. Credits are for Mainnet.
+  </Card>
+</Columns>
+
+Sign up at [app.lumeus.dev](https://app.lumeus.dev) to get a Testnet key in
+under a minute. No card is needed, and Testnet is free.
+
+## Try it
+
+With a Testnet key, one request lists the three largest XLM holders on Testnet:
+
+```bash
+export LUMEUS_API_KEY='paste-your-lum_test_-key'
+
+curl --fail-with-body -sS -G 'https://assets-testnet.lumeus.dev/assets/native/holders' \
+  --data-urlencode limit=3 \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" |
+  jq -r '._embedded.records[] | "\(.balance) XLM  \(.holder)"'
+```
+
+```text Output
+53757260427.8488203 XLM  GBFAIH5WKAJQ77NG6BZG7TGVGXHPX4SQLIJ7BENJMCVCZSUZPSISCLU5
+7056467984.5299856 XLM  GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR
+206509999.7935000 XLM  GATXZXYXXG4ARRZC4G7KYK3OXQFSR4DWPXWJ7R6TEG3J6LPUFDV745EY
+```
+
+The [quickstart](/quickstart) takes you from sign-up to your first Activity,
+Assets and RPC calls, in curl, JavaScript and Python, in about five minutes.
+
+## Base URLs
+
+<Tabs>
+  <Tab title="Testnet" icon="flask-conical">
+
+    | API | Base URL |
+    | --- | --- |
+    | Activity | `https://api-testnet.lumeus.dev` |
+    | Assets | `https://assets-testnet.lumeus.dev` |
+    | Webhooks | `https://webhooks-testnet.lumeus.dev` |
+    | RPC | `https://rpc-testnet.lumeus.dev` |
+
+  </Tab>
+  <Tab title="Mainnet" icon="globe">
+
+    | API | Base URL |
+    | --- | --- |
+    | Activity | `https://api.lumeus.dev` |
+    | Assets | `https://assets.lumeus.dev` |
+    | Webhooks | `https://webhooks.lumeus.dev` |
+    | RPC | `https://rpc.lumeus.dev` |
+
+  </Tab>
+</Tabs>
+
+Activity, Assets and RPC share one API key per network. Webhooks uses a separate
+key. All four accept `Authorization: Bearer <key>`. See
+[authentication](/guides/authentication).
+
+## Plans
+
+Build and test on Testnet for free: up to 10,000 requests a day, reset at
+00:00 UTC, on every plan (unlimited on Enterprise). Credits are for Mainnet.
+Every workspace starts on Free, with 250,000 Mainnet credits a month and one
+Testnet webhook endpoint. Starter, Growth and Scale add credits, higher rate
+limits and webhooks on both networks. Upgrade any time in the dashboard. See
+[plans and billing](/guides/billing).
+
+## History and retention
+
+Activity covers the full history of supported events, back to genesis on
+Mainnet. RPC keeps about seven days of recent ledgers; use the Activity API for
+anything older. See [event coverage](/activity/events) and
+[health checks](/guides/readiness).

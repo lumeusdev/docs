@@ -1,0 +1,219 @@
+---
+title: Follow a contract's events
+sidebarTitle: Follow contract events
+description: Read a Soroban contract's events from a ledger onward, keep following new ones, and filter them by an address in a topic.
+---
+
+Follow everything a Soroban contract emits, such as a lending pool's deposits
+and borrows, with the Activity API. You read the contract's events from a start
+ledger, remember the last ledger scanned, and ask again from the next ledger.
+To see only the events that name one user, filter by topic instead.
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+<TestnetSetup />
+
+This recipe uses a busy Testnet lending pool, one of its borrowers and a recent
+ledger:
+
+```bash
+export POOL='CBXZBQ6NW3TGPGLTR4JCG2VPVWFLCCHKDW75NJIXYXV7CJLNUO64VTFC'
+export BORROWER='GD7B4KAJZE25TZHCTJURSOJOO3LDG4TB375UHZYNI7HQ5DF72WUEMEBA'
+export FROM_LEDGER=5309900
+```
+
+## Read events from a ledger
+
+Contract activity needs a start ledger (`since_ledger`). Ascending order reads
+oldest first:
+
+```bash
+curl --fail-with-body -G "$ACTIVITY_URL/contracts/$POOL/activity" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode "since_ledger=$FROM_LEDGER" \
+  --data-urlencode 'order=asc' \
+  --data-urlencode 'limit=5' \
+  | jq -c '._embedded.records[] | select(.kind == "contract_event") | [.ledger, .type, .topics]'
+```
+
+```text
+[5309900,"redeem_collateral",["redeem_collateral",4,1,"GCS4IOBTI3H6OWF6KJMO46DPXH5BZDDWZRL56B5QMGU2O2VP2VRRKR5S"]]
+[5309900,"withdraw_collateral",["withdraw_collateral",4,1,"GCS4IOBTI3H6OWF6KJMO46DPXH5BZDDWZRL56B5QMGU2O2VP2VRRKR5S"]]
+[5309904,"redeem_collateral",["redeem_collateral",1,2,"GDOCABG6HIMGGMBB6EGOPG76I24VK3WT6OXOIZVSQ764YPUR3DYLN4LA"]]
+```
+
+The route also returns the contract's token movements (`kind`
+`token_transfer`) when the contract is a token. `type` is the event name
+(topic 0), `topics` and `data` are decoded from XDR, and the exact
+`topics_xdr` and `data_xdr` are included too.
+
+## Keep following new events
+
+The follower starts at the current tip and polls. A request whose
+`since_ledger` is past the newest published ledger returns an empty, complete
+page whose `scanned_through_ledger` is that newest ledger, so one cheap call
+finds where "now" is.
+
+<CodeGroup>
+
+```javascript JavaScript
+// Node 18+: save as follow.mjs and run `node follow.mjs` (Ctrl-C to stop)
+const { ACTIVITY_URL, POOL, LUMEUS_API_KEY } = process.env;
+const headers = { Authorization: `Bearer ${LUMEUS_API_KEY}` };
+const sleep = (s) => new Promise((resolve) => setTimeout(resolve, s * 1000));
+const RETRYABLE = ['rate_limited', 'busy', 'index_not_ready', 'unavailable'];
+
+// GET one page. Retries only the codes that are safe to repeat, at most 5 times.
+async function get(href) {
+  for (let attempt = 1; ; attempt++) {
+    const response = await fetch(new URL(href, ACTIVITY_URL), { headers });
+    const page = await response.json().catch(() => ({}));
+    if (response.ok) return page;
+    const wait = Number(response.headers.get('retry-after') ?? 2);
+    if (!RETRYABLE.includes(page.code) || attempt === 5 || wait > 60) {
+      // query_timeout lands here: lower limit instead of repeating the URL.
+      throw new Error(`${response.status} ${page.code}: ${page.error} (${page.request_id})`);
+    }
+    await sleep(wait);
+  }
+}
+
+// Start at the tip. Use a saved ledger instead to resume after a restart.
+let scanned = (await get(`/contracts/${POOL}/activity?since_ledger=2147483647`)).scanned_through_ledger;
+console.log(`following ${POOL} from ledger ${scanned + 1}`);
+
+for (;;) {
+  let href = `/contracts/${POOL}/activity?order=asc&limit=200&since_ledger=${scanned + 1}`;
+  while (href) {
+    const page = await get(href);
+    for (const e of page._embedded.records) {
+      if (e.kind === 'contract_event') console.log(e.ledger, e.type, JSON.stringify(e.topics.slice(1)));
+    }
+    if (page.range_complete) scanned = page.scanned_through_ledger;
+    href = page.range_complete ? null : page._links.next.href;
+  }
+  await sleep(30);
+}
+```
+
+```python Python
+# pip install requests; save as follow.py and run `python follow.py` (Ctrl-C to stop)
+import json
+import os
+import time
+
+import requests
+
+base, pool = os.environ["ACTIVITY_URL"], os.environ["POOL"]
+headers = {"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"}
+
+
+RETRYABLE = {"rate_limited", "busy", "index_not_ready", "unavailable"}
+
+
+def get(href):
+    """GET one page. Retries only the codes that are safe to repeat, at most 5 times."""
+    for attempt in range(1, 6):
+        response = requests.get(base + href, headers=headers, timeout=60)
+        try:
+            page = response.json()
+        except ValueError:
+            page = {}
+        if response.ok:
+            return page
+        wait = int(response.headers.get("Retry-After", "2"))
+        if page.get("code") not in RETRYABLE or attempt == 5 or wait > 60:
+            # query_timeout lands here: lower limit instead of repeating the URL.
+            raise SystemExit(f"{response.status_code} {page.get('code')}: {page.get('error')} ({page.get('request_id')})")
+        time.sleep(wait)
+
+
+# Start at the tip. Use a saved ledger instead to resume after a restart.
+scanned = get(f"/contracts/{pool}/activity?since_ledger=2147483647")["scanned_through_ledger"]
+print(f"following {pool} from ledger {scanned + 1}", flush=True)
+
+while True:
+    href = f"/contracts/{pool}/activity?order=asc&limit=200&since_ledger={scanned + 1}"
+    while href:
+        page = get(href)
+        for e in page["_embedded"]["records"]:
+            if e["kind"] == "contract_event":
+                print(e["ledger"], e["type"], json.dumps(e["topics"][1:]), flush=True)
+        if page["range_complete"]:
+            scanned = page["scanned_through_ledger"]
+        href = None if page["range_complete"] else page["_links"]["next"]["href"]
+    time.sleep(30)
+```
+
+</CodeGroup>
+
+```text
+following CBXZBQ6NW3TGPGLTR4JCG2VPVWFLCCHKDW75NJIXYXV7CJLNUO64VTFC from ledger 5331618
+5331618 borrow_liquidity [4,1,"GCP43JDPDP5TE3OGJSXMS3TDUBCPHBOIXGSC6BM634M3BPLZLJYEPTTF"]
+5331618 redeem_collateral [2,0,"GCVBKZ2UVNPXGTQR3CAJEJL64Q4JSEVLN6643UKQI6NFNWDZD7HJE6EA"]
+```
+
+Save `scanned` after each round in your database, as in
+[Sync history to a database](/recipes/sync-account), so a restart continues
+where it stopped. Deduplicate on `(network, id)`.
+
+`get` retries `rate_limited`, `busy`, `index_not_ready` and `unavailable` after
+`Retry-After`, at most 5 times. It stops on a `Retry-After` over 60 seconds (the
+daily Testnet cap, which resets at 00:00 UTC) and on `query_timeout`, which must
+not be repeated unchanged: lower `limit` and restart from the saved ledger.
+
+## Only events that name an address
+
+Pass `topic1`, `topic2` or `topic3` with a `G...`, `C...`, `B...` or `L...`
+address to get only the contract's events with that address at that topic
+position, from the whole history and without a start ledger. Add `name` to
+match one event name. In this pool the user is topic 3:
+
+```bash
+curl --fail-with-body -G "$ACTIVITY_URL/contracts/$POOL/activity" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode "topic3=$BORROWER" \
+  --data-urlencode 'name=borrow_liquidity' \
+  --data-urlencode 'limit=2' \
+  | jq '._embedded.records[] | {ledger, type, topics, data}'
+```
+
+```json
+{
+  "ledger": 5309976,
+  "type": "borrow_liquidity",
+  "topics": ["borrow_liquidity", 1, 3, "GD7B4KAJZE25TZHCTJURSOJOO3LDG4TB375UHZYNI7HQ5DF72WUEMEBA"],
+  "data": [{ "id": 0, "seed1": null, "seed2": null, "tag": 0 }, "19292241", "0"]
+}
+```
+
+Use one `topicN` per request. To find an address's events across every
+contract, use [`GET /accounts/{id}/contract-events`](/activity/contract-events).
+The follower above works with a topic filter too: add the same parameters to
+each request.
+
+## Credits
+
+On Testnet the follower is free: it costs 0 credits, and its 2,880 requests a
+day (one poll every 30 seconds) count toward your daily Testnet cap of 10,000
+requests.
+
+On Mainnet:
+
+| Request | Credits |
+| --- | --- |
+| Contract activity, per started 100 records | 5 (an empty page costs 5 too) |
+| With `topic1`, `topic2` or `topic3`, per started 100 records | 1 |
+
+Polling every 30 seconds costs at least 14,400 credits a day on plain contract
+activity, about 432,000 a month. That is more than the Free plan's 250,000
+(used up in about 17 days, then `402`), and fits Starter. With a topic filter
+the same follower costs about 86,400 a month. To spend less, poll less often or
+use a [webhook](/webhooks/overview) with `contract_addr`, which pushes each
+event for 1 credit per delivered event. See [Limits and credits](/guides/limits).
+
+## Next
+
+- [Contract events by address](/activity/contract-events): topic index rules and coverage.
+- [Event fields](/activity/events): every record field.
+- [Errors](/guides/errors): `topic_coverage`, `query_timeout` and retries.

@@ -1,0 +1,228 @@
+---
+title: Stellar SDKs
+description: Use Lumeus RPC from the JavaScript, Python and Go Stellar SDKs.
+---
+
+Lumeus RPC speaks standard Stellar JSON-RPC, so the official Stellar SDKs work
+once they send your key in the `Authorization` header. Each example below sets
+the header, makes a call and handles a Lumeus error.
+
+| SDK | Tested versions | Status |
+| --- | --- | --- |
+| JavaScript `@stellar/stellar-sdk` | 16.x and 17.x | Every method works |
+| Python `stellar-sdk` | 16.1.1 | Every method works, including `get_events`, `simulate_transaction` and `prepare_transaction` |
+| Go `github.com/stellar/go-stellar-sdk` `clients/rpcclient` | v0.7.3 | Every method works |
+
+Each example reads the key from `LUMEUS_API_KEY` (a `lum_test_` key for the
+Testnet host). Keep keys in an environment variable or secret manager, never in
+source.
+
+## JavaScript
+
+```bash
+npm install @stellar/stellar-sdk
+```
+
+```js health.mjs
+import { rpc } from "@stellar/stellar-sdk";
+
+const server = new rpc.Server("https://rpc-testnet.lumeus.dev", {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+
+try {
+  const health = await server.getHealth();
+  console.log(health.status, health.latestLedger);
+} catch (e) {
+  // Lumeus errors arrive as HTTP 4xx/5xx with a JSON-RPC error body.
+  const error = e.response?.data?.error;
+  const headers = e.response?.headers; // a Headers-like object: use .get()
+  console.log(e.response?.status, error?.data, error?.message, error?.request_id,
+    headers?.get?.("retry-after") ?? null);
+}
+```
+
+Output with a valid key, then with a bad key:
+
+```text
+healthy 5331471
+401 unauthorized valid API key required req_4760970ed2d938edc0b03410 null
+```
+
+Over the rate limit the same code prints, for example,
+`429 rate_limited RPC rate limit exceeded req_… 2`. Branch on `error.data`; on
+`429` and `503`, wait `Retry-After` seconds before retrying.
+
+## Python
+
+```bash
+pip install stellar-sdk
+```
+
+```python health.py
+import os
+from stellar_sdk import SorobanServer
+from stellar_sdk.client.requests_client import RequestsClient
+from stellar_sdk.exceptions import SorobanRpcErrorResponse
+
+key = os.environ["LUMEUS_API_KEY"]
+# num_retries=0: raise 429/503 at once instead of sleeping through Retry-After.
+server = SorobanServer(
+    "https://rpc-testnet.lumeus.dev",
+    client=RequestsClient(num_retries=0, custom_headers={"Authorization": f"Bearer {key}"}),
+)
+
+try:
+    health = server.get_health()
+    print(health.status, health.latest_ledger)
+except SorobanRpcErrorResponse as e:
+    print(e.code, e.data, e.message)
+```
+
+Output with a valid key, then with a bad key:
+
+```text
+healthy 5331472
+-32000 unauthorized valid API key required
+```
+
+Always pass `num_retries=0`. The default `RequestsClient` retries `413`, `429`,
+`503` and `504` up to 3 times and sleeps for `Retry-After` before each retry
+(up to 6 hours each). On the daily Testnet cap, `Retry-After` counts down to
+00:00 UTC, so a default client blocks for hours instead of raising. With
+`num_retries=0`, a `429` or `503` raises `SorobanRpcErrorResponse` at once.
+
+`e.data` is the Lumeus code (`unauthorized`, `payment_required`, `rate_limited`,
+`unavailable` and the others in [RPC errors](/guides/errors#rpc-errors)). The
+exception does not carry the HTTP status, `Retry-After` or `request_id`; on
+`rate_limited` or `unavailable`, back off for a few seconds and retry a few
+times at most. A `rate_limited` whose message starts with "daily Testnet
+request cap" lasts until 00:00 UTC: stop instead of retrying. Answers that are
+not JSON raise `BadRequestError` or `BadResponseError`, which carry `.status`.
+
+## Go
+
+Save `main.go` below in an empty directory, then:
+
+```bash
+go mod init example
+go get github.com/stellar/go-stellar-sdk@v0.7.3
+go mod tidy
+go run .
+```
+
+```go main.go
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
+)
+
+// lumeus adds the key to every request and turns a Lumeus 4xx/5xx answer
+// into an error that keeps its code, message, request ID and Retry-After.
+type lumeus struct {
+	key  string
+	base http.RoundTripper
+}
+
+func (l lumeus) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("Authorization", "Bearer "+l.key)
+	res, err := l.base.RoundTrip(r)
+	if err != nil || res.StatusCode == http.StatusOK {
+		return res, err
+	}
+	defer res.Body.Close()
+	var body struct {
+		Error struct {
+			Message   string `json:"message"`
+			Data      string `json:"data"`
+			RequestID string `json:"request_id"`
+		} `json:"error"`
+	}
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	_ = json.Unmarshal(raw, &body)
+	return nil, fmt.Errorf("HTTP %d %s: %s (request_id %s, retry-after %q)", res.StatusCode,
+		body.Error.Data, body.Error.Message, body.Error.RequestID, res.Header.Get("Retry-After"))
+}
+
+func main() {
+	client := rpcclient.NewClient("https://rpc-testnet.lumeus.dev", &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: lumeus{key: os.Getenv("LUMEUS_API_KEY"), base: http.DefaultTransport},
+	})
+	defer client.Close()
+
+	health, err := client.GetHealth(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(health.Status, health.LatestLedger)
+}
+```
+
+Output with a valid key, then with a bad key:
+
+```text
+healthy 5332523
+2026/10/22 19:23:25 [-32603] Post "https://rpc-testnet.lumeus.dev": HTTP 401 unauthorized: valid API key required (request_id req_56c45eaf088ec95596e6f911, retry-after "")
+```
+
+The Go client flattens every transport failure into a `-32603` error and keeps
+only its text, so a plain `http.Client` shows just `unexpected HTTP status 401
+Unauthorized`. The `lumeus` transport above puts the Lumeus code, message,
+`request_id` and `Retry-After` into that text; search it for the code (for
+example `rate_limited`).
+
+## Errors by SDK
+
+Lumeus answers its own errors with HTTP `4xx`/`5xx` and a JSON-RPC error body.
+What each SDK gives you for the common ones (checked with JS 17.3.0, Python
+16.1.1 and Go v0.7.3):
+
+| | JavaScript | Python | Go (with the transport above) |
+| --- | --- | --- | --- |
+| Raised | An error with `e.response` | `SorobanRpcErrorResponse` (with `RequestsClient(num_retries=0)`) | `*jrpc2.Error`, code `-32603` |
+| Automatic retries | None | Default client: retries `429`/`503`/`504` 3 times, sleeping `Retry-After`; `num_retries=0` turns this off | None |
+| HTTP status | `e.response.status` | Not exposed | In the error text |
+| Code (`402` `payment_required`, `429` `rate_limited`, `503` `unavailable`) | `e.response.data.error.data` | `e.data` | In the error text |
+| `request_id` | `e.response.data.error.request_id` | Not exposed | In the error text |
+| `Retry-After` | `e.response.headers.get("retry-after")` | Not exposed: back off a few seconds | In the error text |
+
+- **`402 payment_required`:** Mainnet credits are used up on a plan with a hard
+  cap. Do not retry; see [billing](/guides/billing).
+- **`429 rate_limited`:** retry after `Retry-After`. When the message is "daily
+  Testnet request cap of 10000 reached; resets at 00:00 UTC", `Retry-After`
+  counts down to midnight UTC: stop instead of retrying.
+- **`503 unavailable`:** retry after `Retry-After`, a few times at most. For
+  `submission_outcome_unknown` after `sendTransaction`, poll `getTransaction`
+  first; see [submit transactions](/rpc/transactions#if-the-send-times-out).
+
+## Compatibility notes
+
+- Use the Testnet host with a `lum_test_` key and the Mainnet host
+  (`https://rpc.lumeus.dev`) with a `lum_live_` key. A key for the other network
+  gets `401` with a message naming the right host.
+- Publishable `lum_pub_` keys work only from an allowed browser origin and cannot
+  call `sendTransaction` or `simulateTransaction`. See
+  [browser keys](/guides/browser-keys).
+- Lumeus answers its own errors with HTTP `4xx`/`5xx` (public Stellar RPC answers
+  `200`), so SDKs raise them as transport errors.
+- RPC keeps up to about 7 days of history. Use the [Activity API](/activity/overview)
+  for full account history and the [Assets API](/assets-api/overview) for
+  balances.
+
+## Next
+
+- [Submit transactions](/rpc/transactions): a full Testnet payment in JavaScript
+  and Python.
+- [Methods](/rpc/methods): parameters, limits and credits.

@@ -1,0 +1,134 @@
+---
+title: Account history
+description: Copy an account's complete history, then keep it current.
+---
+
+Account history answers "what has this account ever sent, received and paid in
+fees?" This page copies that complete history into your database, then keeps it
+current with only the new ledgers. Use it for wallets, tax and accounting
+exports, and any backend that must not miss a payment.
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+<TestnetSetup />
+
+## Fetch the first page
+
+Walk history oldest first (`order=asc`) with the largest page size:
+
+<CodeGroup>
+
+```bash curl
+curl --fail-with-body -G "$ACTIVITY_URL/accounts/$ACCOUNT/activity" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode 'order=asc' \
+  --data-urlencode 'limit=1000'
+```
+
+```javascript JavaScript
+const url = new URL(`/accounts/${process.env.ACCOUNT}/activity`, process.env.ACTIVITY_URL);
+url.searchParams.set('order', 'asc');
+url.searchParams.set('limit', '1000');
+
+const response = await fetch(url, {
+  headers: { Authorization: `Bearer ${process.env.LUMEUS_API_KEY}` },
+});
+const page = await response.json();
+if (!response.ok) throw new Error(`${page.code}: ${page.error}`);
+console.log(page._embedded.records.length, page.range_complete, page._links.next?.href);
+```
+
+```python Python
+import os
+import requests
+
+response = requests.get(
+    f"{os.environ['ACTIVITY_URL']}/accounts/{os.environ['ACCOUNT']}/activity",
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    params={"order": "asc", "limit": 1000},
+    timeout=60,
+)
+response.raise_for_status()
+page = response.json()
+print(len(page["_embedded"]["records"]), page["range_complete"], page["_links"].get("next", {}).get("href"))
+```
+
+</CodeGroup>
+
+The first page fixes `read_view.snapshot_ledger` for the whole walk, so new
+ledgers do not change the remaining pages. Then follow `_links.next` with the
+[pagination loop](/activity/pagination#page-through-a-range). On Mainnet a
+1000-record page costs 10 credits; Testnet requests are free.
+
+Account activity holds the account's token movements (`transfer`, `mint`,
+`burn`, `clawback`) and the fees it paid. Contract events that name the account
+in a topic, such as an `approve` or a `swap`, come from
+[`GET /accounts/{id}/contract-events`](/activity/contract-events); sync that
+route the same way if you need them.
+
+## Save records and progress
+
+1. Store records with `(network, id)` as the unique key. Webhook deliveries
+   carry the same `id` for the same event, so one table can hold both. After a
+   Testnet reset, ledger numbers and IDs repeat: start a new store, or add the
+   reset date to the key.
+2. Store `_links.next.href` in the same database transaction.
+3. Follow that link until `range_complete` is `true`. The last page has no
+   `next` link.
+4. Save `scanned_through_ledger` from the complete page, even if no events
+   matched. This is your checkpoint.
+
+Do not use the largest event ledger you received as your checkpoint: an account
+with no recent events still has a completed scan through the snapshot.
+
+## Fetch new activity
+
+After a walk that ended with `scanned_through_ledger` S, start a new ascending
+walk at `since_ledger` S+1. Omit `until_ledger`; the range runs to the new
+snapshot. Follow `next` until `range_complete` is `true`, then save the new
+`scanned_through_ledger`.
+
+```bash
+# S is your saved checkpoint. This demo uses the ledger 100 ledgers back.
+S=$(( $(curl --fail-with-body -s "$ACTIVITY_URL/accounts/$ACCOUNT/activity?limit=1" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" | jq .read_view.published_through) - 100 ))
+
+curl --fail-with-body -G "$ACTIVITY_URL/accounts/$ACCOUNT/activity" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode 'order=asc' \
+  --data-urlencode "since_ledger=$((S + 1))" \
+  --data-urlencode 'limit=1000'
+```
+
+If no new ledger is published yet, the page is empty and complete and reports
+`scanned_through_ledger` = S. Save it and ask again later. Ledgers close about
+every 5 seconds, so polling more often gains nothing.
+
+Reads change nothing, so retrying a page is safe; each successful attempt is
+billed. If you send an `Idempotency-Key`, see [idempotency](/guides/idempotency)
+for its rules.
+
+## Filter the history
+
+Add `direction=in`, `direction=out` or `include_fees=false` to narrow a walk. A
+filtered walk also drops rows where the account is only the emitting contract
+or the asset issuer, so it is not a complete history. See
+[account filters](/activity/overview#account-filters).
+
+## Add live webhooks
+
+To combine history with a [webhook](/webhooks/overview) and miss nothing:
+
+1. Create the subscription and read its `activation_checkpoint`, C. Webhooks
+   deliver events from ledger C+1 onward.
+2. Wait until Activity's `read_view.published_through` is at least C.
+3. Walk Activity with `since_ledger` = your start (or `read_view.first_ledger`
+   for all history) and `until_ledger` = C+1. The end is exclusive, so the walk
+   includes C.
+4. Store webhook events as they arrive during the walk, keyed by the same
+   `(network, id)`, so overlaps deduplicate. Do not add `generation` to the
+   key: Activity and Webhooks each have their own.
+
+For example, with C = 5331500: walk `since_ledger=3&until_ledger=5331501`, and
+the first webhook event can be from ledger 5331501. Check
+[webhook recovery](/webhooks/recovery) for gaps in delivery.

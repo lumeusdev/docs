@@ -1,0 +1,118 @@
+---
+title: Last payments of an account
+sidebarTitle: Last payments
+description: List the 10 most recent payments an account sent or received, newest first.
+---
+
+Show a wallet's recent payments with one Activity API request. The account route
+returns the address's token movements newest first; `include_fees=false` drops
+the fee records, leaving the transfers, mints, burns and clawbacks the account
+sent or received. Like any [account filter](/activity/overview#account-filters),
+it also drops rows where the account is only the asset issuer or the emitting
+contract, so an issuer does not see the mints it issued to others.
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+<TestnetSetup />
+
+## Fetch the last 10 payments
+
+<CodeGroup>
+
+```bash curl
+curl --fail-with-body -G "$ACTIVITY_URL/accounts/$ACCOUNT/activity" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode 'limit=10' \
+  --data-urlencode 'include_fees=false' \
+  | jq -r '._embedded.records[] | [.closed_at, .type, .amount, .asset // .contract_address, .from, .to] | @tsv'
+```
+
+```javascript JavaScript
+// Node 18+: save as last-payments.mjs and run `node last-payments.mjs`
+const { ACTIVITY_URL, ACCOUNT, LUMEUS_API_KEY } = process.env;
+
+const url = new URL(`/accounts/${ACCOUNT}/activity`, ACTIVITY_URL);
+url.searchParams.set('limit', '10');
+url.searchParams.set('include_fees', 'false');
+
+const response = await fetch(url, { headers: { Authorization: `Bearer ${LUMEUS_API_KEY}` } });
+const page = await response.json();
+if (!response.ok) throw new Error(`${response.status} ${page.code}: ${page.error}`);
+
+for (const payment of page._embedded.records) {
+  const direction = payment.to === ACCOUNT ? 'in ' : 'out';
+  // asset is absent for custom contract tokens: show the token contract instead.
+  console.log(payment.closed_at, direction, payment.type, payment.amount, payment.asset ?? payment.contract_address);
+}
+```
+
+```python Python
+# pip install requests; save as last_payments.py and run `python last_payments.py`
+import os
+
+import requests
+
+account = os.environ["ACCOUNT"]
+response = requests.get(
+    f"{os.environ['ACTIVITY_URL']}/accounts/{account}/activity",
+    headers={"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"},
+    params={"limit": 10, "include_fees": "false"},
+    timeout=60,
+)
+page = response.json()
+if not response.ok:
+    raise SystemExit(f"{response.status_code} {page['code']}: {page['error']}")
+
+for payment in page["_embedded"]["records"]:
+    direction = "in " if payment.get("to") == account else "out"
+    # asset is absent for custom contract tokens: show the token contract instead.
+    print(payment["closed_at"], direction, payment["type"], payment["amount"],
+          payment.get("asset") or payment.get("contract_address"))
+```
+
+</CodeGroup>
+
+The sample account is the Testnet Friendbot, so every payment is an outgoing
+10,000 XLM `transfer`. One record of the response, trimmed:
+
+```json
+{
+  "id": "testnet:5331457:22",
+  "kind": "token_transfer",
+  "type": "transfer",
+  "ledger": 5331457,
+  "closed_at": "2026-10-22T14:54:32Z",
+  "tx_hash": "15a44f05a85f4806b6acf826e783d4e56a87d1c312d6a5a4b57046ff6696d249",
+  "asset": "native",
+  "from": "GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR",
+  "to": "GCU7NDWF5ZEFYGX7MMUYLTINOTBQZVKYEADUEDNIVQLQZ5F3KF7FGJ7D",
+  "amount": "10000.0000000",
+  "amount_raw": "100000000000",
+  "paging_token": "0022898433455075329-0000000000"
+}
+```
+
+## Variations
+
+| You want | Add |
+| --- | --- |
+| Only incoming payments | `direction=in` |
+| Only outgoing payments | `direction=out` |
+| Only one asset | Filter in your code on `asset` (`native` or `CODE:ISSUER`), or on `contract_address` for a custom contract token |
+| The next 10 | Follow `_links.next.href` from the response |
+| Payments in a ledger range | `since_ledger` (inclusive) and `until_ledger` (exclusive) |
+
+Amounts are decimal strings. Use `amount_raw` (an integer string in the
+asset's smallest unit) for arithmetic, never floating point.
+
+## Credits
+
+On Mainnet, account activity costs 1 credit per started 100 records, so this
+request costs 1 credit. On Testnet it is free and counts as one request toward
+the daily Testnet cap of 10,000. See [Limits and credits](/guides/limits).
+
+## Next
+
+- [Activity API overview](/activity/overview): every record kind and filter.
+- [Pagination](/activity/pagination): follow `next` links safely.
+- [Sync history to a database](/recipes/sync-account): keep a full copy.

@@ -1,0 +1,131 @@
+---
+title: Idempotency and recovery
+description: What Idempotency-Key does on each product, and how to recover a pending or lost result.
+---
+
+An `Idempotency-Key` header lets you retry a request without doing the work
+twice: when Lumeus has already handled a request with the same key, it returns
+the saved result instead of running it again. Use it on webhook control calls
+and snapshot jobs, where it always applies. Reads do not need it.
+
+<Note>
+The [prepaid accounts](#prepaid-accounts) section below applies only to
+workspaces with a prepaid funding agreement. On Free and on paid plans, Activity
+and RPC never return `202` or an operation ID, and you never need
+`/operations/*`.
+</Note>
+
+## How to use a key
+
+1. Generate one key per logical change, for example with `uuidgen` (or
+   `python3 -c 'import uuid; print(uuid.uuid4())'` where `uuidgen` is not
+   installed).
+2. Save the key with the exact request (body, or path and query).
+3. Send the same key and the same request on every retry.
+
+Reusing a key with a different request returns `409 conflict`. Keys are scoped
+to your organization, not to one API key.
+
+## Where it applies
+
+| Product | Routes | Required | Format | Kept for |
+| --- | --- | --- | --- | --- |
+| Webhooks | Subscription create, PATCH and DELETE, signing-key rotate and revoke-previous, tests, replays and source replays | Yes | 1 to 128 characters, no NUL, CR or LF | 90 days |
+| Assets | `POST /snapshots` | No; deduplicates on every plan | 8 to 128 characters | While the job exists |
+| Activity | Data routes | No | 8 to 128 visible ASCII characters (`!` to `~`) | See below |
+| RPC | `POST /` | No | 8 to 128 bytes, no NUL, CR or LF | See below |
+
+**Webhooks.** A retry with the original key, `If-Match` value and body returns
+the saved result, even after the subscription version has moved on. Quote
+routes, `GET` requests and replay cancellation do not read the key.
+
+**Assets.** A repeated `POST /snapshots` with the same key returns the existing
+job instead of starting (and charging) a new one.
+
+**Activity and RPC.** On plan workspaces (Free included), reads and RPC calls
+run directly and are not deduplicated, so the key has no effect. Activity still validates a key you
+send and returns `400 invalid_request` for a malformed one. RPC tells you the
+key was not used:
+
+```bash
+curl --fail-with-body --silent --output /dev/null --dump-header - "$RPC_URL/" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $(uuidgen)" \
+  --data '{"jsonrpc":"2.0","id":"1","method":"getHealth"}' | grep -i '^x-lumeus'
+```
+
+```text Output
+x-lumeus-idempotency: ignored
+```
+
+For `sendTransaction`, rely on the transaction hash instead: resubmitting the
+same signed envelope is safe, and `getTransaction` tells you its outcome. See
+[RPC errors](/guides/errors#rpc-errors).
+
+## Prepaid accounts
+
+This section and the two below it apply only to workspaces with prepaid
+funding, which Lumeus arranges per agreement. Free and paid plan workspaces can
+skip them.
+
+On workspaces with prepaid funding, Activity and RPC requests that send an
+`Idempotency-Key` are deduplicated and their responses are saved, so a client
+that lost a response can fetch it again. The key is then required on every
+Activity collection and transaction request and on RPC `POST /`. It is bound to
+the network, the index generation and the exact request URI (Activity) or body
+bytes (RPC). Publishable keys cannot be used on these workspaces.
+
+### Pending operations
+
+A request on a prepaid account can return `202` with an operation object and
+the headers `Location: /operations/{id}`, `X-Lumeus-Operation-ID` and
+`Retry-After: 5`. Save the operation ID, then:
+
+1. Poll `GET /operations/{id}` on the same host. It returns `200` with `state`:
+   `prepared`, `ready`, `executing`, `pending_billing`, `completed`, `expired`
+   or `cancelled`. RPC can also report `unresolved` after an uncertain
+   submission.
+2. When `state` is `completed`, call `GET /operations/{id}/result`. It returns
+   the saved response with its original status. Before completion it returns
+   `202`; after expiry, `410`.
+
+A `402` with an operation object means the prepaid funds did not cover the
+request.
+
+### Recover a result
+
+```bash
+export OPERATION_ID='paste-the-X-Lumeus-Operation-ID-value'
+
+curl --fail-with-body "$RPC_URL/operations/$OPERATION_ID" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY"
+```
+
+Check `state` and honor `Retry-After`. Fetch `result_url` when the operation is
+completed. Activity uses the same routes on `$ACTIVITY_URL`. An operation
+belongs to its product, network and organization.
+
+| Item | Limit |
+| --- | --- |
+| Saved response | 24 hours |
+| Deduplication identity | 30 days |
+| Result transfers | Three in total, including the original response; then `429` |
+| Recovery reads | 30 per minute per organization, not charged again |
+| Expired result | `410` |
+
+Save results in your own storage if you need them longer. A retained identity
+cannot restore expired response bytes.
+
+<Accordion title="Uncertain RPC submissions">
+If a `sendTransaction` answer was lost, the recovery worker looks up the
+original transaction hash and verifies the matching envelope and chain outcome.
+It does not resubmit, and it does not treat `NOT_FOUND` as failure.
+
+A reconstructed result includes
+`lumeusRecovery.originalResponseUnavailable: true` and the verified
+`chainStatus` and ledger fields. It is not the original RPC response.
+
+If the operation stays `unresolved`, send support its operation ID and
+transaction hash. Do not start repeated requests with new keys.
+</Accordion>

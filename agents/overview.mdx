@@ -1,0 +1,94 @@
+---
+title: Lumeus for agents
+sidebarTitle: Overview
+description: Give your coding agent the Lumeus skill, the docs and a Testnet key.
+---
+
+Lumeus works well with coding agents such as Claude Code, Cursor and Codex.
+Give your agent three things: the Lumeus skill, a Testnet key, and these docs
+in a format it can read.
+
+## Set up in one prompt
+
+Sign up at [app.lumeus.dev](https://app.lumeus.dev). The onboarding screen shows
+a ready-made prompt that already contains your new Testnet key. Copy it into
+your agent. The prompt has this shape:
+
+```text
+Set up Lumeus (Stellar Testnet) in this project.
+
+1. Read the Lumeus skill at https://app.lumeus.dev/agents/lumeus/SKILL.md and follow it.
+   If you support skills, save it as a skill named "lumeus".
+2. Save my key to .env.local and make sure .env* is in .gitignore:
+   LUMEUS_API_KEY=lum_test_...
+   Never print, log or commit it. Use it only in server-side code.
+3. Prove it works: fetch recent activity for a Testnet account with the
+   Activity API and show me the real response.
+Then suggest what I could build next with the Activity API, the Assets API, RPC and Webhooks.
+```
+
+Setup is complete when the agent makes its first request with the key. The
+dashboard shows that request live.
+
+## The Lumeus skill
+
+The skill is a single Markdown file at
+`https://app.lumeus.dev/agents/lumeus/SKILL.md`. It describes the four
+products, their hosts, keys, free Testnet and Mainnet credits, error codes and
+retry rules, and the common tasks with working requests. It defaults to Testnet and asks for your
+confirmation before any Mainnet transaction.
+
+To install it as a skill in Claude Code, save it into your project:
+
+```bash
+mkdir -p .claude/skills/lumeus
+curl -fsSL https://app.lumeus.dev/agents/lumeus/SKILL.md \
+  -o .claude/skills/lumeus/SKILL.md
+```
+
+Other agents can read the same URL directly, or keep a copy in the project's
+agent instructions.
+
+## Docs in agent-readable formats
+
+| Resource | URL |
+| --- | --- |
+| Index of every page | `https://docs.lumeus.dev/llms.txt` |
+| All pages in one file | `https://docs.lumeus.dev/llms-full.txt` |
+| Any page as Markdown | Add `.md` to the page URL, for example `https://docs.lumeus.dev/quickstart.md` |
+
+Every page also has a **Copy page** menu that copies the page as Markdown or
+opens it in ChatGPT or Claude.
+
+## OpenAPI documents
+
+Each API host serves its own OpenAPI document (version 3.0), without a key. Point SDK
+generators and agents at the host and network you use:
+
+| API | Testnet | Mainnet |
+| --- | --- | --- |
+| Activity and account | `https://api-testnet.lumeus.dev/openapi.json` | `https://api.lumeus.dev/openapi.json` |
+| Assets | `https://assets-testnet.lumeus.dev/openapi.json` | `https://assets.lumeus.dev/openapi.json` |
+| Webhooks | `https://webhooks-testnet.lumeus.dev/openapi.json` | `https://webhooks.lumeus.dev/openapi.json` |
+| RPC | `https://rpc-testnet.lumeus.dev/openapi.json` | `https://rpc.lumeus.dev/openapi.json` |
+
+The RPC document types every method's `result` as a component named after the
+method with a `Result` suffix (`getHealthResult`, `getEventsResult`, ...), and
+each [method page](/api/rpc/getHealth) has a `Result` table.
+
+## Keys for agents
+
+- Give an agent a Testnet key (`lum_test_...`) first. Testnet is free: up to
+  10,000 requests a day per organization, reset at 00:00 UTC, with no credits
+  used. Past the cap, Testnet requests return `429 rate_limited` until the
+  reset. Credits are for Mainnet.
+- Use a read key (`access: "read"`) when the agent only needs data. Read keys
+  cannot send transactions or change keys and billing. See
+  [authentication](/guides/authentication#read-only-keys-and-expiry).
+- Set `expires_at` on keys you create for short-lived work.
+- Keep keys in environment variables or a secret manager, never in code or
+  prompts you share.
+- For a frontend the agent builds, use a [browser key](/guides/browser-keys)
+  instead of a server key. Browsers block server-key responses on every site
+  except the Lumeus docs and dashboard, so a server key in a web page fails
+  with a CORS error.

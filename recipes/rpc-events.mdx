@@ -1,0 +1,199 @@
+---
+title: Page through RPC events
+sidebarTitle: RPC event pages
+description: Read a contract's recent events with getEvents, page with the cursor, and keep up with new ledgers.
+---
+
+Stellar RPC's `getEvents` returns contract events from its recent window (up
+to about 7 days on Lumeus RPC; `getHealth` returns the oldest ledger). This
+recipe reads a contract's events from a start ledger, pages with `cursor`, and
+keeps polling for new ones. For events
+older than the RPC window, use [Follow a contract's events](/recipes/watch-contract)
+on the Activity API.
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+<TestnetSetup />
+
+This recipe uses a busy Testnet lending pool:
+
+```bash
+export POOL='CBXZBQ6NW3TGPGLTR4JCG2VPVWFLCCHKDW75NJIXYXV7CJLNUO64VTFC'
+```
+
+## Read and page
+
+<CodeGroup>
+
+```bash curl
+rpc() {
+  curl --fail-with-body -sS "$RPC_URL" \
+    -H "Authorization: Bearer $LUMEUS_API_KEY" \
+    -H 'Content-Type: application/json' \
+    --data "$1"
+}
+
+# Start 100 ledgers (about 8 minutes) back from the newest ledger.
+LATEST=$(rpc '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' | jq .result.latestLedger)
+
+PAGE=$(rpc "$(jq -nc --argjson start "$((LATEST - 100))" --arg pool "$POOL" '{
+  jsonrpc: "2.0", id: 2, method: "getEvents",
+  params: {startLedger: $start, xdrFormat: "json",
+           filters: [{type: "contract", contractIds: [$pool]}], pagination: {limit: 5}}}')")
+echo "$PAGE" | jq -c '.result.events[] | [.ledger, .topicJson[0].symbol, .id]'
+
+# Next page: the same filters, the cursor instead of startLedger.
+CURSOR=$(echo "$PAGE" | jq -r .result.cursor)
+rpc "$(jq -nc --arg cursor "$CURSOR" --arg pool "$POOL" '{
+  jsonrpc: "2.0", id: 3, method: "getEvents",
+  params: {xdrFormat: "json", filters: [{type: "contract", contractIds: [$pool]}],
+           pagination: {cursor: $cursor, limit: 5}}}')" \
+  | jq -c '.result.events[] | [.ledger, .topicJson[0].symbol, .id]'
+```
+
+```javascript JavaScript
+// Node 18+: save as rpc-events.mjs and run `node rpc-events.mjs` (Ctrl-C to stop)
+const { RPC_URL, POOL, LUMEUS_API_KEY } = process.env;
+const sleep = (s) => new Promise((resolve) => setTimeout(resolve, s * 1000));
+
+// One JSON-RPC call. Retries 429 and 503 after Retry-After, at most 5 times.
+async function rpc(method, params) {
+  for (let attempt = 1; ; attempt++) {
+    const response = await fetch(RPC_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${LUMEUS_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (response.ok && !body.error) return body.result;
+    const wait = Number(response.headers.get('retry-after') ?? 2);
+    const retryable = response.status === 429 || response.status === 503;
+    // A wait over 60 s is the daily Testnet cap (resets at 00:00 UTC): stop instead.
+    if (!retryable || attempt === 5 || wait > 60) {
+      throw new Error(`${response.status} ${body.error?.data}: ${body.error?.message} (${body.error?.request_id})`);
+    }
+    await sleep(wait);
+  }
+}
+
+const filters = [{ type: 'contract', contractIds: [POOL] }];
+const { latestLedger } = await rpc('getHealth');
+let params = { startLedger: latestLedger - 100, filters, xdrFormat: 'json', pagination: { limit: 100 } };
+
+for (;;) {
+  const page = await rpc('getEvents', params);
+  for (const e of page.events) console.log(e.ledger, e.topicJson[0].symbol, e.id);
+  params = { filters, xdrFormat: 'json', pagination: { cursor: page.cursor, limit: 100 } };
+  // A short page means you have caught up: wait for new ledgers (about 5 s each).
+  if (page.events.length < 100) await sleep(30);
+}
+```
+
+```python Python
+# pip install requests; save as rpc_events.py and run `python rpc_events.py` (Ctrl-C to stop)
+import os
+import time
+
+import requests
+
+rpc_url, pool = os.environ["RPC_URL"], os.environ["POOL"]
+headers = {"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"}
+
+
+def rpc(method, params=None):
+    """One JSON-RPC call. Retries 429 and 503 after Retry-After, at most 5 times."""
+    body = {"jsonrpc": "2.0", "id": 1, "method": method}
+    if params is not None:
+        body["params"] = params
+    for attempt in range(1, 6):
+        response = requests.post(rpc_url, json=body, headers=headers, timeout=60)
+        try:
+            reply = response.json()
+        except ValueError:
+            reply = {}
+        if response.ok and "error" not in reply:
+            return reply["result"]
+        wait = int(response.headers.get("Retry-After", "2"))
+        # A wait over 60 s is the daily Testnet cap (resets at 00:00 UTC): stop instead.
+        if response.status_code not in (429, 503) or attempt == 5 or wait > 60:
+            error = reply.get("error", {})
+            raise SystemExit(f"{response.status_code} {error.get('data')}: {error.get('message')} ({error.get('request_id')})")
+        time.sleep(wait)
+
+
+filters = [{"type": "contract", "contractIds": [pool]}]
+latest = rpc("getHealth")["latestLedger"]
+params = {"startLedger": latest - 100, "filters": filters, "xdrFormat": "json", "pagination": {"limit": 100}}
+
+while True:
+    page = rpc("getEvents", params)
+    for e in page["events"]:
+        print(e["ledger"], e["topicJson"][0]["symbol"], e["id"], flush=True)
+    params = {"filters": filters, "xdrFormat": "json", "pagination": {"cursor": page["cursor"], "limit": 100}}
+    # A short page means you have caught up: wait for new ledgers (about 5 s each).
+    if len(page["events"]) < 100:
+        time.sleep(30)
+```
+
+</CodeGroup>
+
+```text
+5331552 redeem_collateral 0022898841476968448-0000000002
+5331552 withdraw_collateral 0022898841476968448-0000000003
+5331552 deposit_liquidity 0022898841476972544-0000000002
+```
+
+One event with `xdrFormat: "json"`, trimmed:
+
+```json
+{
+  "type": "contract",
+  "ledger": 5329535,
+  "ledgerClosedAt": "2026-10-22T12:14:22Z",
+  "contractId": "CBXZBQ6NW3TGPGLTR4JCG2VPVWFLCCHKDW75NJIXYXV7CJLNUO64VTFC",
+  "id": "0022890178527916032-0000000002",
+  "txHash": "d1aea6ece64676a78aa9d09e3b1ac997bf63ed26a39b666291f798fb34e4aa91",
+  "topicJson": [
+    { "symbol": "redeem_collateral" },
+    { "u32": 2 },
+    { "u32": 0 },
+    { "address": "GA3HLUKHVDWUUA6IUO2JJV6UTISELJKWZZPF7VOZZX5JIEX4M24WFHN7" }
+  ],
+  "valueJson": { "vec": [{ "u64": "1917" }, { "u64": "1917" }] }
+}
+```
+
+## Rules
+
+- Send `startLedger` on the first call only. Later calls send
+  `pagination.cursor` from the previous result and repeat the same `filters`.
+- `startLedger` must be inside the RPC window: from `oldestLedger` to
+  `latestLedger`, both returned by every `getEvents` call. Older ledgers return
+  an error.
+- Save `cursor` after each page to resume after a restart. Deduplicate on the
+  event `id`.
+- `rpc` retries `429` (`rate_limited`) and `503` (`unavailable`) after
+  `Retry-After`, at most 5 times, and stops on any other error. Free allows 30
+  RPC requests a minute, so a fast catch-up can hit `429`.
+- Without `xdrFormat: "json"`, topics and values come as base64 XDR in `topic`
+  and `value`.
+
+See [RPC methods](/rpc/methods) for the filter limits and the page size.
+
+## Credits
+
+On Testnet the follower is free: it costs 0 credits, and its 2,880 calls a day
+(one poll every 30 seconds) count toward your daily Testnet cap of 10,000
+requests.
+
+On Mainnet, `getEvents` costs 2 credits plus 1 credit per started 64 KiB of
+response, so each poll costs at least 3. Polling every 30 seconds costs at
+least 8,640 credits a day, about 259,000 a month: slightly more than the Free
+plan's 250,000, so poll less often on Free or use Starter. See
+[RPC methods](/rpc/methods#credits).
+
+## Next
+
+- [Follow a contract's events](/recipes/watch-contract): full history through the Activity API.
+- [RPC methods](/rpc/methods): every method, its limits and credits.
+- [Errors](/guides/errors#rpc-errors): RPC `error.data` codes.

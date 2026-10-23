@@ -1,0 +1,187 @@
+---
+title: Airdrop holder snapshot
+sidebarTitle: Airdrop snapshot
+description: List every holder of a token at a past ledger and compute each one's share for an airdrop.
+---
+
+An airdrop needs a fixed list: who held the token at a chosen ledger, and how
+much. The Assets API answers holders at a past ledger with `as_of_ledger`, so
+the list does not change while you compute allocations or when people move
+funds afterwards.
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+<TestnetSetup />
+
+Pick the snapshot ledger and the total amount to distribute:
+
+```bash
+export SNAPSHOT_LEDGER=5300000
+export AIRDROP_TOTAL=1000000
+```
+
+`as_of_ledger` reads cover ledgers from `read_view.bootstrap_ledger` (5253887 on
+Testnet) up to a few minutes behind the tip. For an older ledger, use a
+[snapshot job](#older-ledgers).
+
+## Check the ledger
+
+One request shows the holder count at that ledger and confirms the history
+answers it:
+
+```bash
+curl --fail-with-body -G "$ASSETS_URL/assets/$ASSET/holders" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  --data-urlencode "as_of_ledger=$SNAPSHOT_LEDGER" \
+  --data-urlencode 'limit=1' \
+  | jq '{holder_count, read_view}'
+```
+
+```json
+{
+  "holder_count": 55,
+  "read_view": {
+    "network": "testnet",
+    "generation": "assets-testnet-v1-5253887",
+    "as_of_ledger": 5300000,
+    "as_of_closed_at": null,
+    "bootstrap_ledger": 5253887
+  }
+}
+```
+
+## Build the allocation
+
+The script reads every holder at the ledger, keeps accounts (contracts such as
+pools and vaults are left out), and splits `AIRDROP_TOTAL` in proportion to
+balance with integer math. It writes `airdrop.csv`.
+
+<CodeGroup>
+
+```javascript JavaScript
+// Node 18+: save as airdrop.mjs and run `node airdrop.mjs`
+import { writeFileSync } from 'node:fs';
+
+const { ASSETS_URL, ASSET, SNAPSHOT_LEDGER, AIRDROP_TOTAL, LUMEUS_API_KEY } = process.env;
+const headers = { Authorization: `Bearer ${LUMEUS_API_KEY}` };
+
+const holders = [];
+let href = `/assets/${ASSET}/holders?as_of_ledger=${SNAPSHOT_LEDGER}&limit=200`;
+while (href) {
+  const response = await fetch(new URL(href, ASSETS_URL), { headers });
+  const page = await response.json();
+  if (!response.ok) throw new Error(`${response.status} ${page.code}: ${page.error}`);
+  holders.push(...page._embedded.records);
+  href = page._links.next?.href;
+}
+
+const eligible = holders.filter((h) => h.kind !== 'contract');
+const totalRaw = eligible.reduce((sum, h) => sum + BigInt(h.balance_raw), 0n);
+const rows = eligible.map((h) => {
+  const amount = (BigInt(AIRDROP_TOTAL) * BigInt(h.balance_raw)) / totalRaw; // rounds down
+  return `${h.holder},${h.balance_raw},${amount}`;
+});
+writeFileSync('airdrop.csv', ['address,balance_raw,airdrop', ...rows].join('\n') + '\n');
+console.log(`${holders.length} holders at ledger ${SNAPSHOT_LEDGER}, ${eligible.length} eligible`);
+console.log(rows.slice(0, 3).join('\n'));
+```
+
+```python Python
+# pip install requests; save as airdrop.py and run `python airdrop.py`
+import csv
+import os
+
+import requests
+
+base, asset = os.environ["ASSETS_URL"], os.environ["ASSET"]
+ledger, total = os.environ["SNAPSHOT_LEDGER"], int(os.environ["AIRDROP_TOTAL"])
+headers = {"Authorization": f"Bearer {os.environ['LUMEUS_API_KEY']}"}
+
+holders = []
+href = f"/assets/{asset}/holders?as_of_ledger={ledger}&limit=200"
+while href:
+    response = requests.get(base + href, headers=headers, timeout=60)
+    page = response.json()
+    if not response.ok:
+        raise SystemExit(f"{response.status_code} {page['code']}: {page['error']}")
+    holders += page["_embedded"]["records"]
+    href = page["_links"].get("next", {}).get("href")
+
+eligible = [h for h in holders if h["kind"] != "contract"]
+total_raw = sum(int(h["balance_raw"]) for h in eligible)
+rows = [(h["holder"], h["balance_raw"], total * int(h["balance_raw"]) // total_raw) for h in eligible]
+
+with open("airdrop.csv", "w", newline="") as f:
+    writer = csv.writer(f, lineterminator="\n")
+    writer.writerow(["address", "balance_raw", "airdrop"])
+    writer.writerows(rows)
+print(f"{len(holders)} holders at ledger {ledger}, {len(eligible)} eligible")
+for row in rows[:3]:
+    print(",".join(map(str, row)))
+```
+
+</CodeGroup>
+
+Output for Testnet `BTC` at ledger 5300000:
+
+```text
+55 holders at ledger 5300000, 46 eligible
+GD7B4KAJZE25TZHCTJURSOJOO3LDG4TB375UHZYNI7HQ5DF72WUEMEBA,190620393,744755
+GADH5BQZDLFX5WY5HL5X2C3WVH2HWTMC6IIP22VRFGUQZMVQSBFYD4VK,19800000,77358
+GAKXMRQWFNFYPAZNBVO3IIXHDOCDI3NW7ID44CZLU6WIKKKTEQCOCSSO,9900000,38679
+```
+
+Each share rounds down, so the rows add up to slightly less than
+`AIRDROP_TOTAL`. Send the remainder (`AIRDROP_TOTAL` minus the sum of the
+`airdrop` column) to the largest holder, or keep it. Keep the snapshot ledger
+and the CSV together: anyone can recompute the list from the same ledger and
+get the same rows.
+
+## Rules for past-ledger reads
+
+- The answer is the state after the ledger closed. `supply` and
+  `as_of_closed_at` are `null` at a past ledger; `holder_count` is the count
+  at that ledger.
+- A ledger after the latest applied one is `400`. A ledger the history cannot
+  answer exactly (before `bootstrap_ledger`, or the last few minutes) is
+  `409 history_unavailable`; the message says which.
+- Assets with more than 100,000 current holders return `409`; use a snapshot
+  job.
+- Publishable (`lum_pub_`) keys cannot use `as_of_ledger`.
+
+## Older ledgers
+
+For a ledger before `bootstrap_ledger`, or a token with more than 100,000
+holders, start a snapshot job. It returns up to the top 10,000 holders at any
+ledger from 63 on. On Testnet the job is free (one request toward the daily
+Testnet cap):
+
+{/* not-run: starts a snapshot job (a write) */}
+```bash
+curl --fail-with-body "$ASSETS_URL/snapshots" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -H 'Content-Type: application/json' \
+  --data "$(jq -nc --arg asset "$ASSET" --argjson ledger "$SNAPSHOT_LEDGER" \
+    '{kind: "holders", asset: $asset, as_of_ledger: $ledger}')"
+```
+
+Poll `GET /snapshots/{id}` until `status` is `completed`, then read
+`result.records`. If `result.truncated` is `true`, the token had more than
+10,000 holders at that ledger and the list holds only the largest 10,000: the
+airdrop would leave out the smallest holders, so decide whether that is
+acceptable before you distribute. See [Historical snapshots](/assets-api/snapshots) for the
+full job flow.
+
+## Credits
+
+On Testnet these reads are free: the script above makes 2 requests toward the
+daily Testnet cap of 10,000. On Mainnet, `as_of_ledger` reads answer
+`501 not_implemented`, so this recipe runs on Testnet only. See
+[Limits and credits](/guides/limits).
+
+## Next
+
+- [Historical snapshots](/assets-api/snapshots): past-ledger reads and jobs.
+- [Top holders of a token](/recipes/top-holders): the current ranking.
+- [Holders](/assets-api/holders): filters and one holder's rank.

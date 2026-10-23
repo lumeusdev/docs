@@ -1,0 +1,144 @@
+---
+title: Browser keys
+description: Publishable keys for calling Activity, Assets and RPC from web pages.
+---
+
+A publishable key (`lum_pub_test_...` or `lum_pub_live_...`) is meant to be
+embedded in a web page. It can only read data, only from the web origins you
+list, and it carries its own abuse limits. Keep full and read keys on your
+server: browsers on any website other than the Lumeus docs and dashboard
+cannot read responses made with them (see [CORS](#cors)).
+
+| Credential | Use it from | Can call |
+| --- | --- | --- |
+| `lum_test_...` / `lum_live_...` (full) | Your server, or the docs "Try it" and the dashboard | Everything the workspace allows |
+| `lum_test_...` / `lum_live_...` (read) | Your server, or the docs "Try it" and the dashboard | Product data routes and RPC methods except `sendTransaction` |
+| `lum_pub_test_...` / `lum_pub_live_...` | Browser pages | The Activity, Assets and RPC read routes [listed below](#what-a-publishable-key-can-call) |
+
+## Create a publishable key
+
+Create one in the dashboard under **API keys**, or from your server with a full
+key (the variables are set in the [quickstart](/quickstart)):
+
+```bash
+curl --fail-with-body "$ACTIVITY_URL/v1/keys" \
+  -H "Authorization: Bearer $LUMEUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "name": "explorer widget",
+    "access": "publishable",
+    "allowed_origins": ["https://app.example.com", "http://localhost:3000"],
+    "rate_limit_per_minute_per_ip": 60,
+    "monthly_credit_cap": 200000
+  }'
+```
+
+| Field | Rules |
+| --- | --- |
+| `allowed_origins` | Required. 1 to 20 exact origins, `scheme://host[:port]`, at most 150 characters each. HTTPS only, except `http://localhost` and `http://127.0.0.1` for development. No wildcards, paths or query strings. Stored lowercase without a default port. |
+| `rate_limit_per_minute_per_ip` | Optional. Requests per minute from one end-user IP, 1 to 600, default 60. Your plan's rate limit still applies to the whole workspace. |
+| `monthly_credit_cap` | Optional. Credits this key may use per billing period. Without a cap, the key spends from the workspace like any other key. |
+
+The response returns `api_key` once, like other keys. `GET /v1/keys` lists the
+type, origins and limits. `PATCH /v1/keys/{id}` changes the name,
+`allowed_origins`, `rate_limit_per_minute_per_ip` or `monthly_credit_cap`
+(send `null` to remove the cap). Revoke and rotate work as for other keys; a
+rotated publishable key keeps its origins and limits.
+
+## Call the APIs from a page
+
+The same key works on the Activity, Assets and RPC hosts of its network:
+
+```javascript
+const PUBLISHABLE_KEY = "lum_pub_test_..."; // from the dashboard
+const ACCOUNT = "GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR";
+const headers = { Authorization: `Bearer ${PUBLISHABLE_KEY}` };
+
+// Recent activity
+const activity = await fetch(
+  `https://api-testnet.lumeus.dev/accounts/${ACCOUNT}/activity?limit=10`,
+  { headers },
+).then((r) => r.json());
+
+// Current balances
+const holdings = await fetch(
+  `https://assets-testnet.lumeus.dev/accounts/${ACCOUNT}/holdings`,
+  { headers },
+).then((r) => r.json());
+
+// Latest ledger
+const latest = await fetch("https://rpc-testnet.lumeus.dev/", {
+  method: "POST",
+  headers: { ...headers, "Content-Type": "application/json" },
+  body: JSON.stringify({ jsonrpc: "2.0", id: "1", method: "getLatestLedger" }),
+}).then((r) => r.json());
+```
+
+The browser sends `Origin` automatically. Lumeus checks it against the key:
+
+- No `Origin`, or one that is not in `allowed_origins`: `403`, and the browser
+  cannot read the response.
+- An allowed origin: the response carries `Access-Control-Allow-Origin` with
+  that origin and `Vary: Origin`.
+
+Send the key in `Authorization`; browsers cannot send `X-API-Key` cross-origin.
+
+## CORS
+
+Which browser pages can read a response depends on the key:
+
+| Key | Origins that can read responses |
+| --- | --- |
+| Full or read key | Only `https://docs.lumeus.dev` (the "Try it" playground) and `https://app.lumeus.dev` (the dashboard). Every other website is blocked by the browser. |
+| Publishable key | The origins in its `allowed_origins` list |
+
+Lumeus never allows credentials (cookies) or a wildcard origin, and every
+response carries `Vary: Origin`. A preflight (`OPTIONS`) answers `204` and
+allows the `Authorization`, `Content-Type`, `Idempotency-Key`, `If-Match`,
+`If-None-Match` and `X-Request-Id` request headers, cached for 600 seconds.
+A page on an allowed origin can read these response headers, on errors too:
+
+`ETag`, `Link`, `Location`, `Retry-After`, `X-Request-Id`,
+`X-Lumeus-Operation-Id`, `X-Lumeus-Idempotency`, `RateLimit-Limit`,
+`RateLimit-Remaining` and `RateLimit-Reset`.
+
+So read `Retry-After` and `X-Request-Id` in your page as you would on a server.
+
+## What a publishable key can call
+
+| Product | Allowed (`GET` only for REST) |
+| --- | --- |
+| Activity | `/accounts/{id}/activity`, `/accounts/{id}/contract-events`, `/assets/{asset}/activity`, `/contracts/{id}/activity`, `/transactions/{hash}/activity`, `/activity`, `/transactions/{hash}` |
+| Assets | `/accounts/{address}/holdings`, `/accounts/{address}/claimable-balances`, `/accounts/{address}/offers`, `/accounts/{address}/allowances`, `/assets`, `/assets/{asset}`. Not with `as_of_ledger`. |
+| RPC | `getHealth`, `getNetwork`, `getVersionInfo`, `getFeeStats`, `getLatestLedger`, `getTransaction`, `getLedgerEntries`, `getLedgers`, `getTransactions`, `getEvents` |
+
+Everything else returns `403`: Assets holders, holder rank and snapshots, any
+`as_of_ledger` read, `/v1/*`, `/billing/*`, `/operations/*`, and RPC
+`sendTransaction` and `simulateTransaction`, alone or in a batch. Call those
+from your server with a secret key.
+
+## Limits and errors
+
+| Status | Meaning |
+| --- | --- |
+| `403` | Missing or unlisted `Origin`, or a route or method publishable keys cannot call. |
+| `429` with a short `Retry-After` | The key's per-IP limit or the workspace rate limit. `Retry-After` is the time until the next request is admitted. |
+| `429` with a longer `Retry-After` | The key reached `monthly_credit_cap`. It stays blocked until the next billing period (`Retry-After` counts the seconds) or until you raise or remove the cap. Other keys keep working. |
+| `429` with `Retry-After` up to a day | A Testnet key's workspace reached the daily Testnet request cap; it resets at 00:00 UTC. |
+| `402` | The workspace's monthly Mainnet credits are used up, as for any key. |
+
+The cap counts settled credits plus the worst-case cost of requests in flight.
+Concurrent requests are admitted only while their worst cases fit under the
+cap; when they do not, requests run one at a time, so usage passes the cap by at
+most one request's cost. A rotated key starts a new count.
+
+## What the origin check does not do
+
+`Origin` is enforced by browsers. A script or server can send any `Origin`
+header, so anyone who copies the key from your page can call the same read
+routes from outside a browser. The origin list stops other websites from using
+your key in their visitors' browsers; it is not authentication. What bounds
+misuse is the per-IP limit, the monthly credit cap and the read-only scope. Set
+a cap you are comfortable paying for, keep the per-IP limit near what one
+visitor needs, and rotate the key if you see unexpected usage in the
+dashboard's usage and request logs.

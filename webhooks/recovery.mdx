@@ -1,0 +1,132 @@
+---
+title: Coverage and recovery
+description: Find ledgers and deliveries an endpoint missed, then fill them from the Activity API.
+---
+
+import TestnetSetup from '/snippets/testnet-setup.mdx';
+
+Use this page when your receiver may have missed events: it was down past the
+retry window, you paused the endpoint, or a limit skipped a ledger. Coverage
+tells you which ledgers were not covered and why, the delivery list shows
+which deliveries failed, and you fill the holes from the
+[Activity API](/activity/history), which holds the complete history.
+
+<TestnetSetup />
+
+```bash
+# Your Testnet webhook key and the subscription to work on
+export LUMEUS_WEBHOOK_KEY='paste-your-whk_-key'
+export SUBSCRIPTION_ID='paste-your-subscription-id'
+```
+
+## Check coverage
+
+```bash
+curl --fail-with-body -sS "$WEBHOOKS_URL/v1/subscriptions/$SUBSCRIPTION_ID/coverage" \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" | jq '{gaps, historical_until_ledger}'
+```
+
+```json Response (200, captured on Testnet, trimmed)
+{
+  "gaps": [
+    { "first_ledger": 5293268, "last_ledger": 5293268, "reason": "free_quota_exhausted", "approximate": false },
+    { "first_ledger": 5293272, "last_ledger": 5293284, "reason": "free_quota_exhausted", "approximate": false }
+  ],
+  "historical_until_ledger": 5293205
+}
+```
+
+Each gap is an inclusive ledger range in which this endpoint matched nothing
+and delivered nothing. `historical_until_ledger` is the first ledger covered by
+live delivery (activation checkpoint + 1): use it as the exclusive
+`until_ledger` when you read earlier history from Activity. The response also
+contains the subscription itself. It keeps up to 128 gap ranges; older ones
+are merged into one `coverage_unknown_compacted` range.
+
+| `reason` | Why the ledgers were skipped | What to do |
+| --- | --- | --- |
+| `paused_by_user` | You paused the endpoint | Read the range from Activity |
+| `awaiting_activation` | The endpoint was still activating | Read the range from Activity |
+| `awaiting_subscription_slot` | The endpoint was waiting for a place under your plan's endpoint count | Delete an endpoint or upgrade, then read the range from Activity |
+| `free_quota_exhausted` | The Free plan's 1,000 deliveries for that UTC day were used | Narrow the filters or upgrade; read the range from Activity |
+| `free_webhooks_disabled` | Free webhooks were unavailable on the network | Read the range from Activity |
+| `plan_not_entitled` | Your plan no longer includes this paid endpoint | Upgrade to resume; read the range from Activity |
+| `paid_webhooks_disabled` | Paid webhooks were unavailable on the network | Read the range from Activity |
+| `funding_exhausted` | A prepaid (funded) endpoint ran out of delivery capacity | Contact support; read the range from Activity |
+| `payload_or_policy_limit` | One ledger matched more than 4,096 events, or an event was over the size limit | Narrow the filters; read the range from Activity |
+| `multiple_causes` | Adjacent ledgers were skipped for different reasons | Read the range from Activity |
+| `coverage_unknown_compacted` | Old gaps were merged (`approximate: true`); coverage inside is unknown | Read the whole range from Activity |
+
+## Find failed deliveries
+
+A delivery that failed all its attempts is `dead`. List deliveries newest
+first:
+
+```bash
+curl --fail-with-body -sS -G "$WEBHOOKS_URL/v1/subscriptions/$SUBSCRIPTION_ID/deliveries" \
+  --data-urlencode limit=50 \
+  -H "Authorization: Bearer $LUMEUS_WEBHOOK_KEY" \
+  | jq '.deliveries[] | select(.status == "dead") | {id, event_id, attempts, response_code, last_error}'
+```
+
+Each delivery has `status` (`pending`, `delivered` or `dead`), `attempts`,
+`response_code` or `last_error`, `lane` (`live` or `replay`) and, on paid
+endpoints, the `credits` charged. `next_attempt_at` is set only while the
+delivery is pending. Pass `next_cursor` back as `before` for older pages
+(`limit` up to 500).
+
+## Fill gaps from Activity
+
+The Activity API has the complete history on every plan, so it can fill any
+gap or dead delivery. For a gap from `first_ledger` F to `last_ledger` L, read
+`since_ledger=F` and `until_ledger=L+1` with the same filter as the
+subscription. For the second gap above, with an account filter:
+
+```bash
+curl --fail-with-body -sS -G "$ACTIVITY_URL/accounts/$ACCOUNT/activity" \
+  --data-urlencode since_ledger=5293272 \
+  --data-urlencode until_ledger=5293285 \
+  --data-urlencode order=asc \
+  --data-urlencode limit=200 \
+  -H "Authorization: Bearer $LUMEUS_API_KEY"
+```
+
+Activity events have the same `id` as webhook events, so store them under the
+same `(network, id)` unique key and the ones you already have are ignored. Do
+not add `generation` to the key: Activity's `read_view.generation` and the
+webhook generation are different values (see
+[Deduplicate](/webhooks/receive#deduplicate)). Follow `_links.next` until
+`range_complete` is `true`; see [Pagination](/activity/pagination).
+
+## Replay
+
+Replay redelivers events to your endpoint, signed, on the `replay` lane
+(`X-Webhook-Replay-Id` and `lane: "replay"` in the signed context). It comes
+in two kinds: stored deliveries from the last 7 days, and a short range of
+recent ledgers. Each replay is quoted first, then started with the quote's
+`quote_sha256`; see
+[Quote a redelivery](/reference/webhooks/replay/quote-a-redelivery)
+and [Quote a source replay](/reference/webhooks/replay/quote-a-source-replay)
+for the requests.
+
+Free and paid plan endpoints get `403` on every replay request (quote or
+start); fill their gaps from Activity as above:
+
+| Endpoint | Response |
+| --- | --- |
+| Free | `403 forbidden`, `"free Testnet webhooks do not support replay"` |
+| Paid plan | `403 forbidden`, `"replays are not yet available for paid webhook endpoints"` |
+
+```json Response (403)
+{
+  "error": "free Testnet webhooks do not support replay",
+  "code": "forbidden",
+  "request_id": "req_8e94e8c6add729cafe7f44b4"
+}
+```
+
+## Next
+
+- [Receive and verify](/webhooks/receive): retries, timeouts and deduplication.
+- [Activity history](/activity/history): the reads used to fill gaps.
+- [Manage subscriptions](/webhooks/lifecycle): pause, resume and change filters.
