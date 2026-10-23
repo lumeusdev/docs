@@ -69,7 +69,7 @@ curl --fail-with-body https://api.lumeus.dev/v1/plans
 | `overage_per_1k_cents` | Price of each further 1,000 credits; `0` on Free, which has `hard_cap: true` |
 | `rate_per_minute`, `rpc_rate_per_minute` | Requests per minute for Activity and Assets together, and for RPC |
 | `max_page_size`, `account_max_page_size` | Largest `limit` on collections, and on account activity |
-| `max_webhook_endpoints` | Webhook endpoints the plan allows (Free: one Testnet endpoint) |
+| `max_webhook_endpoints` | Webhook endpoints the plan allows (Free: one Testnet endpoint). `0` means no plan limit (Enterprise), where each network still allows up to 1,000 |
 | `rpc_method_credits`, `credit_weights` | What each RPC method and REST route class costs |
 | `subscribable` | `true` when you can buy the plan from this catalog |
 | `custom` | `true` for Enterprise, whose terms are by agreement |

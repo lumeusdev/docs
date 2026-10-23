@@ -56,7 +56,7 @@ The `testnet` block of [`/v1/usage`](#check-usage) shows today's count, and
 unlimited).
 
 <Note>
-Plan rates are ceilings, not guarantees. In load tests (October 2026) one
+Plan rates are ceilings, not guarantees. In load tests one
 workspace sustained about 10 requests per second on the Activity API, about 9
 on the Assets API and a few per second on RPC, whatever the plan. Faster
 traffic queues, or returns `429` or `503` with `Retry-After`. Contact
@@ -190,7 +190,7 @@ curl --fail-with-body "$ACTIVITY_URL/v1/usage" \
 
 | Field | Meaning |
 | --- | --- |
-| `monthly_credits_used`, `monthly_credits_remaining` | Mainnet credits this billing period. Testnet never adds to them. |
+| `monthly_credits_used`, `monthly_credits_remaining` | Mainnet credits this billing period. Testnet never adds to them. On plans without a credit limit (Enterprise), `monthly_credits_limit`, `monthly_credits_remaining` and `hard_cap` are left out |
 | `monthly_requests` | Charged requests on both networks this period, Testnet included at 0 credits |
 | `testnet.daily_requests_used` | Testnet requests admitted today (UTC), each RPC batch call counted |
 | `testnet.daily_requests_limit`, `testnet.daily_requests_remaining` | The daily cap and what is left; `null` on Enterprise (unlimited) |
