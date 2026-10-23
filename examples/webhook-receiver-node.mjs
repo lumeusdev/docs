@@ -3,7 +3,7 @@
 //   WEBHOOK_SECRET=whsec_... node webhook-receiver-node.mjs
 //   WEBHOOK_SECRET_FILE=webhook-secret.txt node webhook-receiver-node.mjs
 //
-// Put verify-webhook.mjs (https://docs.lumeus.dev/examples/verify-webhook.mjs)
+// Put verify-webhook.mjs (https://raw.githubusercontent.com/lumeusdev/docs/main/examples/verify-webhook.mjs)
 // next to this file. The secret comes from WEBHOOK_SECRET, or from the file
 // named by WEBHOOK_SECRET_FILE, which is read on every request: you can start
 // the receiver before you create the subscription, and it answers 503 until the

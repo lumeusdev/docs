@@ -6,10 +6,10 @@ description: Headers, signature checks, deduplication, retries and timeouts for 
 This page is the contract between Lumeus and your receiver: what each delivery
 contains, how to verify it, and how your response decides between success and
 retry. Start from one of the ready receivers, which do all of this for you:
-[Node.js](/examples/webhook-receiver-node.mjs) (with
-[verify-webhook.mjs](/examples/verify-webhook.mjs)),
-[Python](/examples/webhook_receiver.py) or
-[Go](/examples/webhook-receiver-go/main.go).
+[Node.js](https://github.com/lumeusdev/docs/blob/main/examples/webhook-receiver-node.mjs) (with
+[verify-webhook.mjs](https://github.com/lumeusdev/docs/blob/main/examples/verify-webhook.mjs)),
+[Python](https://github.com/lumeusdev/docs/blob/main/examples/webhook_receiver.py) or
+[Go](https://github.com/lumeusdev/docs/blob/main/examples/webhook-receiver-go/main.go).
 
 ## What a delivery looks like
 
@@ -90,7 +90,7 @@ bytes, with the same timestamp.
 <Tabs>
 <Tab title="Node.js (Express)">
 
-Download [verify-webhook.mjs](/examples/verify-webhook.mjs) next to your app.
+Download [verify-webhook.mjs](https://github.com/lumeusdev/docs/blob/main/examples/verify-webhook.mjs) next to your app.
 `express.raw` keeps the body as a Buffer.
 
 ```javascript
@@ -121,7 +121,7 @@ app.listen(3000);
 </Tab>
 <Tab title="Python">
 
-Download [webhook_receiver.py](/examples/webhook_receiver.py). It is a complete
+Download [webhook_receiver.py](https://github.com/lumeusdev/docs/blob/main/examples/webhook_receiver.py). It is a complete
 receiver, and its `verify_webhook` works with any framework that gives you the
 raw body bytes and case-insensitive headers.
 
@@ -143,7 +143,7 @@ def handle(raw_body: bytes, headers, secrets):
 </Tab>
 <Tab title="Go">
 
-Copy `Verify` from [main.go](/examples/webhook-receiver-go/main.go).
+Copy `Verify` from [main.go](https://github.com/lumeusdev/docs/blob/main/examples/webhook-receiver-go/main.go).
 
 ```go
 body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<10))
