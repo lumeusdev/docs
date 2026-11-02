@@ -4067,9 +4067,6 @@
                           "hard_cap": {
                             "type": "boolean"
                           },
-                          "overage_per_1k_cents": {
-                            "type": "integer"
-                          },
                           "subscribable": {
                             "type": "boolean",
                             "description": "True when the plan can be bought now through POST /billing/checkout (Stripe Checkout)."
@@ -4179,7 +4176,6 @@
                       "account_max_page_size": 1000,
                       "deep_history": true,
                       "hard_cap": true,
-                      "overage_per_1k_cents": 0,
                       "subscribable": false,
                       "custom": false,
                       "rpc_enabled": true,
@@ -4213,8 +4209,7 @@
                       "max_page_size": 200,
                       "account_max_page_size": 1000,
                       "deep_history": true,
-                      "hard_cap": false,
-                      "overage_per_1k_cents": 1,
+                      "hard_cap": true,
                       "subscribable": false,
                       "custom": false,
                       "rpc_enabled": true,
@@ -4248,8 +4243,7 @@
                       "max_page_size": 200,
                       "account_max_page_size": 1000,
                       "deep_history": true,
-                      "hard_cap": false,
-                      "overage_per_1k_cents": 1,
+                      "hard_cap": true,
                       "subscribable": false,
                       "custom": false,
                       "rpc_enabled": true,
@@ -4283,8 +4277,7 @@
                       "max_page_size": 200,
                       "account_max_page_size": 1000,
                       "deep_history": true,
-                      "hard_cap": false,
-                      "overage_per_1k_cents": 1,
+                      "hard_cap": true,
                       "subscribable": false,
                       "custom": false,
                       "rpc_enabled": true,
@@ -4319,7 +4312,6 @@
                       "account_max_page_size": 1000,
                       "deep_history": true,
                       "hard_cap": false,
-                      "overage_per_1k_cents": 0,
                       "subscribable": false,
                       "custom": true,
                       "rpc_enabled": true,

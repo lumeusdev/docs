@@ -15,14 +15,15 @@ Prices are in [plans and billing](/guides/billing).
 
 | Plan | Mainnet credits per month | Testnet requests per day | Activity and Assets requests per minute | RPC requests per minute | Webhook endpoints |
 | --- | --- | --- | --- | --- | --- |
-| Free | 250,000, hard cap | 10,000 | 60 | 30 | 1 Testnet endpoint |
+| Free | 250,000 | 10,000 | 60 | 30 | 1 Testnet endpoint |
 | Starter | 3,000,000 | 10,000 | 600 | 300 | 10 |
 | Growth | 12,000,000 | 10,000 | 3,000 | 600 | 50 |
 | Scale | 64,000,000 | 10,000 | 6,000 | 1,200 | 250 |
-| Enterprise | By agreement | Unlimited | 30,000 | 10,000 | 1,000 per network |
+| Enterprise | Unlimited | Unlimited | 30,000 | 10,000 | 1,000 per network |
 
-On Free, a Mainnet request that would pass 250,000 credits returns `402` until
-the period resets; paid plans continue with overage. A request over the
+When a workspace has used its monthly credits, Mainnet requests return `402`
+until the next period, on every plan except Enterprise. Upgrade on the
+[Plans page](https://app.lumeus.dev/plans) for more credits at once. A request over the
 per-minute rate returns `429` with `Retry-After`; see
 [rate limits](/guides/rate-limits).
 
@@ -149,7 +150,7 @@ The live weights are `credit_weights` in `/v1/plans`.
 | --- | --- |
 | `400` | Invalid input, an unknown or repeated query parameter, or an `as_of_ledger` after the latest applied ledger |
 | `401` | Missing, revoked or wrong-network key |
-| `402` | The organization reached its Mainnet credit cap |
+| `402` | The organization has used its monthly Mainnet credits |
 | `403` | A publishable key on a route it cannot call (holders, snapshots, `as_of_ledger`) or from an unlisted `Origin`, or an account whose email is not confirmed |
 | `404` | Unknown asset, or the address has no entry for it |
 | `409` | `history_unavailable`: `as_of_ledger` cannot be answered from the balance history (start a snapshot job); or an `Idempotency-Key` reused with a different snapshot request |
@@ -199,7 +200,7 @@ curl --fail-with-body "$ACTIVITY_URL/v1/usage" \
 `GET /v1/me` carries the same `testnet` block. The block is left out only when
 the counter cannot be read. Use `/v1/usage/breakdown` to group usage by key,
 network and route (including Assets routes; Testnet rows show 0 credits), and
-`/v1/usage/series` for daily or hourly buckets. `/v1/logs` lists the last 24 hours of API-key requests;
+`/v1/usage/series` for daily or hourly buckets. `/v1/logs` lists the last 30 days of API-key requests, with the full request (path and query, or RPC params) and client IP;
 filter with `product=activity`, `assets` or `rpc`.
 
 Paid webhook deliveries appear under the `webhooks` endpoint. Credits equal

@@ -1,23 +1,25 @@
 ---
 title: Plans and billing
-description: Plans, prices, the plan catalog, upgrades, overage and when a request is charged.
+description: Plans, prices, the plan catalog, upgrades, plan changes and when a request is charged.
 ---
 
 Build and test on Testnet for free: up to 10,000 requests a day (unlimited on
 Enterprise), reset at 00:00 UTC. Credits are for Mainnet. Every workspace starts on Free;
-paid plans are self-serve: open **Usage & billing** in the dashboard, choose a
-plan and pay with Stripe Checkout. One plan covers your whole workspace on both
-networks. Prices are in US dollars.
+paid plans are self-serve: open the [Plans page](https://app.lumeus.dev/plans)
+in the dashboard, choose a plan and pay with Stripe Checkout. One plan covers
+your whole workspace on both networks. Prices are in US dollars, and each plan
+is a fixed monthly price for a fixed number of credits: your bill never grows
+with usage.
 
 ## Plans
 
-| Plan | Price per month | Included Mainnet credits | Over the included credits | Testnet |
-| --- | --- | --- | --- | --- |
-| Free | $0 | 250,000 | Mainnet requests stop (`402`) until the next period | Free, 10,000 requests a day |
-| Starter | $29 | 3,000,000 | $0.01 per 1,000 credits | Free, 10,000 requests a day |
-| Growth | $99 | 12,000,000 | $0.01 per 1,000 credits | Free, 10,000 requests a day |
-| Scale | $499 | 64,000,000 | $0.01 per 1,000 credits | Free, 10,000 requests a day |
-| Enterprise | By agreement | By agreement | By agreement | Free, unlimited |
+| Plan | Price per month | Mainnet credits per month | Testnet |
+| --- | --- | --- | --- |
+| Free | $0 | 250,000 | Free, 10,000 requests a day |
+| Starter | $29 | 3,000,000 | Free, 10,000 requests a day |
+| Growth | $99 | 12,000,000 | Free, 10,000 requests a day |
+| Scale | $499 | 64,000,000 | Free, 10,000 requests a day |
+| Enterprise | By agreement | Unlimited | Free, unlimited |
 
 Mainnet credits are shared by the Activity API, the Assets API, RPC and webhook
 deliveries. Testnet requests and Testnet webhook deliveries cost no credits and
@@ -45,8 +47,7 @@ curl --fail-with-body https://api.lumeus.dev/v1/plans
       "name": "starter",
       "monthly_fee_cents": 2900,
       "included_credits": 3000000,
-      "overage_per_1k_cents": 1,
-      "hard_cap": false,
+      "hard_cap": true,
       "rate_per_minute": 600,
       "rpc_rate_per_minute": 300,
       "max_page_size": 200,
@@ -66,7 +67,7 @@ curl --fail-with-body https://api.lumeus.dev/v1/plans
 | --- | --- |
 | `name` | `free`, `starter`, `growth`, `scale` or `enterprise`; the value you send to checkout |
 | `monthly_fee_cents`, `included_credits` | Price and Mainnet credits per billing period |
-| `overage_per_1k_cents` | Price of each further 1,000 credits; `0` on Free, which has `hard_cap: true` |
+| `hard_cap` | `true` when Mainnet requests stop at `included_credits`: every plan except Enterprise |
 | `rate_per_minute`, `rpc_rate_per_minute` | Requests per minute for Activity and Assets together, and for RPC |
 | `max_page_size`, `account_max_page_size` | Largest `limit` on collections, and on account activity |
 | `max_webhook_endpoints` | Webhook endpoints the plan allows (Free: one Testnet endpoint). `0` means no plan limit (Enterprise), where each network still allows up to 1,000 |
@@ -83,7 +84,7 @@ only. The subscription you buy applies to both networks.
 
 ## Upgrade
 
-1. In the dashboard, open **Usage & billing** and choose **Compare plans**.
+1. In the dashboard, open the [Plans page](https://app.lumeus.dev/plans).
 2. Pick Starter, Growth or Scale and complete Stripe Checkout.
 3. The plan changes when Stripe confirms the payment, usually within seconds.
    The return to the dashboard alone is not proof of payment.
@@ -97,32 +98,57 @@ on the day your Free period started.
 A workspace has one subscription. A further checkout returns `409` with
 `code: conflict` and a `reason`:
 
-- `subscription_exists`: the workspace already has a subscription;
+- `subscription_exists`: the workspace already has a subscription; change it
+  as described below;
 - `subscription_pending`: a paid checkout is still being set up. Refresh in a
-  minute.
+  minute;
+- `self_serve_unavailable`: plan changes for this workspace are handled by
+  Lumeus. Email hello@lumeus.dev.
 
 When present, `portal_url` opens the billing portal.
 
 ## Change or cancel a plan
 
-`POST /billing/subscription` with `{"plan":"growth"}` moves the current
-subscription to another plan, up or down. Stripe invoices the prorated
-difference immediately; if an upgrade's payment fails, the plan does not change.
-The plan changes when Stripe confirms the update. Never start a second checkout
-to change plans. Cancel in the billing portal (**Manage subscription**, or
-`POST /billing/portal`); cancelling returns the workspace to Free.
+Change plans on the [Plans page](https://app.lumeus.dev/plans). It shows the
+price of the change before you confirm it.
 
+- **Upgrade:** applies at once. Your billing month restarts today with the new
+  plan's full credits, and you pay the new price minus the unused part of your
+  current plan. If the card needs another step (a declined card or 3-D
+  Secure), the plan changes once you pay the invoice the dashboard links to.
+- **Downgrade:** takes effect at the end of the current period. Until then you
+  keep your current plan and its credits.
+- **Cancel:** choose Free. The subscription ends at the end of the current
+  period and the workspace returns to Free.
+
+You can undo a scheduled downgrade or cancellation until it takes effect.
 Upgrading keeps your keys, logs and data. For webhooks on paid plans, see
 [webhook plans](/webhooks/overview#plans).
 
-## Overage and invoices
+From code, with a full API key or a signed-in session:
 
-Paid plans keep working past their included credits. Each further 1,000 credits
-costs $0.01 and appears on the next monthly invoice. Free never bills: at
-250,000 credits, Mainnet requests return `402 payment_required` until the
-period resets, while Testnet keeps working up to its daily cap. Check usage at
-any time with `GET /v1/usage` or on **Usage & billing**, which shows today's
-Testnet requests next to your Mainnet credits:
+| Call | What it does |
+| --- | --- |
+| `GET /billing/subscription` | The plan, current period, scheduled change, payment method and any unpaid invoice |
+| `POST /billing/subscription/preview` with `{"plan":"growth"}` | The amount charged today (`amount_due_cents`), the next monthly fee and when the change applies |
+| `POST /billing/subscription` with `{"plan":"growth"}` | Makes the change. `status` is `upgraded`, `scheduled`, `canceling` or `requires_payment` (pay at `invoice_url`). `{"plan":"free"}` cancels at the period end |
+| `POST /billing/subscription/resume` | Undoes a scheduled downgrade or cancellation (`status: resumed`) |
+
+Never start a second checkout to change plans.
+
+## When your credits are used up
+
+Each plan includes a fixed number of Mainnet credits per month. When a
+workspace has used them, Mainnet requests to the Activity API, the Assets API
+and RPC return `402 payment_required` until the next period starts, and paid
+Mainnet webhook endpoints pause until then (`plan_not_entitled` coverage gaps).
+Upgrade on the [Plans page](https://app.lumeus.dev/plans) for more credits
+right away: the upgrade starts a new month with the full credits of the new
+plan. Testnet keeps working up to its daily cap. Enterprise is unlimited;
+contact hello@lumeus.dev.
+
+Check usage at any time with `GET /v1/usage` or on **Usage & billing**, which
+shows today's Testnet requests next to your Mainnet credits:
 
 ```json GET /v1/usage (trimmed)
 {
@@ -130,6 +156,7 @@ Testnet requests next to your Mainnet credits:
   "monthly_credits_limit": 250000,
   "monthly_credits_used": 5393,
   "monthly_credits_remaining": 244607,
+  "hard_cap": true,
   "testnet": {
     "free": true,
     "day": "2026-10-22",
@@ -154,12 +181,14 @@ the actual cost before the response is sent:
   unknown transaction hash: `404 not_found` on `/transactions/{hash}` or
   `/transactions/{hash}/activity` costs 1 credit, because the lookup searched
   the full history.
-- On Free (hard cap), a request never costs more than the credits reserved for
-  it, so a large response can cost less than the formula. Near the cap a
-  request is refused with `402` when its reservation does not fit, even if its
-  actual cost would. Assets reads reserve by the requested `limit`, Activity
-  pages reserve the plan's maximum page, and RPC calls reserve their method's
-  maximum response.
+- On Free, a request never costs more than the credits reserved for it, so a
+  large response can cost less than the formula. Near the limit a request is
+  refused with `402` when its reservation does not fit, even if its actual cost
+  would. Assets reads reserve by the requested `limit`, Activity pages reserve
+  the plan's maximum page, and RPC calls reserve their method's maximum
+  response.
+- On paid plans, requests already in progress when the credits run out still
+  complete, at no extra charge.
 - `monthly_requests` in `/v1/usage` counts settled requests on both networks,
   Testnet included at 0 credits. Refunded requests are not counted.
 

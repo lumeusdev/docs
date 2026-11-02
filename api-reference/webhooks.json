@@ -4234,7 +4234,7 @@
           },
           "metered": {
             "type": "boolean",
-            "description": "True for a paid-plan endpoint: every delivered Mainnet event costs the catalog webhook credit weight (1 credit) from the organization's monthly balance, with overage billed on paid plans. Testnet deliveries, and failed, cancelled and expired deliveries, cost nothing. Replays are not yet available for paid endpoints."
+            "description": "True for a paid-plan endpoint: every delivered Mainnet event costs the catalog webhook credit weight (1 credit) from the organization's monthly balance. Testnet deliveries, and failed, cancelled and expired deliveries, cost nothing. Replays are not yet available for paid endpoints."
           },
           "signing_version": {
             "type": "integer",
